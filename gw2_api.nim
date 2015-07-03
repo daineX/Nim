@@ -2,6 +2,7 @@ import httpclient
 import uri
 import json
 import strutils
+import sequtils
 
 const apiURL = "https://api.guildwars2.com/v2/"
 
@@ -13,10 +14,7 @@ proc parseCharacters(apiToken: string): seq[string] =
     let
         resp = buildRequest("characters", apiToken)
         payload = parseJson(resp.body)
-    var res =  newSeq[string]()
-    for name in payload:
-        res.add(name.str)
-    return res
+    return payload.mapIt(string, $(it.str))
 
 proc main(apiToken: string): string =
     return parseCharacters(apiToken).join(", ")
