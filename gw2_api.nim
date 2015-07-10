@@ -9,8 +9,7 @@ from sequtils import mapIt
 const apiURL = "https://api.guildwars2.com/v2/"
 
 proc buildRequest(endpoint: string, parameters: var Table[string, string], apiToken: string = ""): JsonNode =
-    var
-        requestURL = $(parseUri(apiURL) / endpoint)
+    var requestURL = $(parseUri(apiURL) / endpoint)
     if apiToken.len > 0:
         parameters.add("access_token", $apiToken)
     if parameters.len > 0:
@@ -30,10 +29,8 @@ proc buildRequest(endpoint: string, apiToken: string = ""): JsonNode =
     return buildRequest(endpoint, parameters, apiToken)
 
 proc getItemDetails(ids: seq[int]): Table[int, string] =
-    let
-        strIds = ids.mapIt(string, $it).join(",")
-    var
-        parameters = {"ids": strIds}.toTable
+    let strIds = ids.mapIt(string, $it).join(",")
+    var parameters = {"ids": strIds}.toTable
     result = initTable[int, string]()
 
     let payload = buildRequest("items", parameters)
@@ -41,8 +38,7 @@ proc getItemDetails(ids: seq[int]): Table[int, string] =
         result.add(int(itemNode["id"].num), itemNode["name"].str)
 
 proc parseCharacters(apiToken: string): seq[string] =
-    let
-        payload = buildRequest("characters", apiToken=apiToken)
+    let payload = buildRequest("characters", apiToken=apiToken)
     return payload.mapIt(string, it.str)
 
 proc getCharacterDetails(apiToken: string, characterName: string): string =
