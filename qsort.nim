@@ -21,9 +21,9 @@ proc swap[T](l: var seq[T], a: T, b: T) =
     l[a] = l[b]
     l[b] = temp
 
-type StackType = tuple[low: int, high: int]
 
-proc qsort_inline (l: var seq[int]) =
+proc qsort_inline[T](l: var seq[T]) =
+    type StackType = tuple[low: T, high: T]
     var stack = newSeq[StackType]()
     var top: StackType
     top = (0, l.high)
