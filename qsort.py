@@ -38,27 +38,20 @@ def iter_qsort(it):
 
 
 if __name__ == "__main__":
-    #print qsort0(list(reversed(range(10))))
-
-    #random_list = [randint(1, 1000) for _ in xrange(1000)]
-    #sorted_list = qsort0(random_list)
-    #print sorted_list
-    #assert sorted_list == sorted(random_list)
-
-    #print list(iter_qsort(reversed(range(10))))
-
     random_list = [randint(1, 1000) for _ in xrange(1000)]
-    #sorted_list = list(iter_qsort(iter(random_list)))
-    #print sorted_list
-    #print sorted(random_list)
-    #assert sorted_list == sorted(random_list)
-
 
     import time
-    print "Qsort:"
+    print "qsort0:"
     start_time = time.time()
     for _ in range(100):
         qsort0(random_list)
+    end_time = time.time()
+    print end_time - start_time
+
+    print "iter_qsort:"
+    start_time = time.time()
+    for _ in range(100):
+        list(iter_qsort(iter(random_list)))
     end_time = time.time()
     print end_time - start_time
 

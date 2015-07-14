@@ -66,7 +66,6 @@ proc qsort_inline[T](l: var seq[T]) =
 
 when isMainModule:
     randomize()
-#     var random_list = @[9, 7, 6, 2, 2, 9, 2, 8, 2, 4]
 
     var cumulativeTime = 0.0
     for _ in 1..100:
