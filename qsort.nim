@@ -16,18 +16,15 @@ proc qsort[T](l: seq[T]): seq[T] =
             greater.add(i)
     return qsort(less) & @[pivot] & qsort(greater)
 
-proc swap[T](l: var seq[T], a: T, b: T) =
+proc swap[T](l: var seq[T], a: int, b: int) =
     let temp = l[a]
     l[a] = l[b]
     l[b] = temp
 
 
 proc qsort_inline[T](l: var seq[T]) =
-    type StackType = tuple[low: T, high: T]
-    var stack = newSeq[StackType]()
-    var top: StackType
-    top = (0, l.high)
-    stack.add(top)
+    var stack = newSeq[tuple[low: int, high: int]]()
+    stack.add((0, l.high))
     while stack.len > 0:
         let st = stack.pop()
         var pivot_idx = (st.low + st.high) div 2
@@ -58,11 +55,9 @@ proc qsort_inline[T](l: var seq[T]) =
             nlow = low - 1
             nhigh = high + 1
         if nlow - st.low > 1:
-            top = (st.low, nlow)
-            stack.add(top)
+            stack.add((st.low, nlow))
         if st.high - nhigh > 1:
-            top = (nhigh, st.high)
-            stack.add(top)
+            stack.add((nhigh, st.high))
 
 when isMainModule:
     randomize()
@@ -75,3 +70,6 @@ when isMainModule:
         let endTime = epochTime()
         cumulativeTime += endTime - startTime
     echo cumulativeTime
+
+    var float_list = mapIt(newSeq[float](1000), float, random(1.0))
+    qsort_inline(float_list)
