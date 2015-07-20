@@ -2,11 +2,13 @@
 import tables
 from httpclient import request
 from uri import parseUri, `/`, `$`
-from json import items, JsonNode, parseJson, `[]`
-from strutils import join, replace, `%`
+from json import items, JsonNode, parseJson, `[]`, `$`, hasKey
+from strutils import join, replace, startsWith, `%`
 from sequtils import mapIt
 
 const apiURL = "https://api.guildwars2.com/v2/"
+
+type RequestFailed = object of Exception
 
 proc buildRequest(endpoint: string, parameters: var Table[string, string], apiToken: string = ""): JsonNode =
     var requestURL = $(parseUri(apiURL) / endpoint)
@@ -22,6 +24,8 @@ proc buildRequest(endpoint: string, parameters: var Table[string, string], apiTo
             inc idx
 
     var resp = request(requestURL)
+    if not resp.status.startsWith("2"):
+        raise newException(RequestFailed, resp.status)
     return parseJson(resp.body)
 
 proc buildRequest(endpoint: string, apiToken: string = ""): JsonNode =
@@ -79,11 +83,15 @@ when isMainModule:
     import os
     var apiToken = ""
     if paramCount() > 0:
-        let apiToken = paramStr(1)
-        if paramCount() > 1:
-            let characterName = paramStr(2)
-            echo getCharacterDetails(apiToken, characterName)
-        else:
-            let characterNames = parseCharacters(apiToken)
-            for characterName in characterNames:
+        try:
+            let apiToken = paramStr(1)
+            if paramCount() > 1:
+                let characterName = paramStr(2)
                 echo getCharacterDetails(apiToken, characterName)
+            else:
+                let characterNames = parseCharacters(apiToken)
+                for characterName in characterNames:
+                    echo getCharacterDetails(apiToken, characterName)
+        except RequestFailed:
+            echo "Request Failed:"
+            echo getCurrentExceptionMsg()
