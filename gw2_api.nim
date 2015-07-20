@@ -3,7 +3,7 @@ import tables
 from httpclient import request
 from uri import parseUri, `/`, `$`
 from json import items, JsonNode, parseJson, `[]`, `$`, hasKey
-from strutils import join, replace, startsWith, `%`
+from strutils import join, replace, startsWith, `%`, intToStr
 from sequtils import mapIt
 
 const apiURL = "https://api.guildwars2.com/v2/"
@@ -56,6 +56,17 @@ let skinnableSlots = @["Backpack", "Coat", "Boots", "Gloves", "Helm", "HelmAquat
                        "Leggings", "Shoulders", "WeaponA1", "WeaponA2",
                        "WeaponB1", "WeaponB2", "WeaponAquaticA", "WeaponAquaticB"]
 
+proc formatTime(seconds: int64): string =
+    result = ""
+    if seconds < 60:
+        result &= "$#s" % [$ seconds]
+    elif seconds < 3600:
+        result &= "$#m:$#s" % [$ (seconds div 60), intToStr(seconds mod 60, 2)]
+    else:
+        result &= "$#h:$#m:$#s" % [$ (seconds div 3600),
+                                   intToStr((seconds mod 3600) div 60, 2),
+                                   intToStr(seconds mod 60, 2)]
+
 proc getCharacterDetails(apiToken: string, characterName: string): string =
     let
         payload = buildRequest($(parseUri("characters") / characterName.replace(" ", "%20")), apiToken=apiToken)
@@ -79,7 +90,7 @@ proc getCharacterDetails(apiToken: string, characterName: string): string =
 
     res.add("$# ($#):" % [name, $ level])
     res.add("    Level $# $# $#" % [gender, race, profession])
-    res.add("    Average life-span: $#s" % [$avgLifeSpan])
+    res.add("    Average life-span: $#" % [formatTime(avgLifeSpan)])
 
     res.add("    Equipment:")
     for equip in equipment:
