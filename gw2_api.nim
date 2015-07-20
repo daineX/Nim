@@ -32,18 +32,29 @@ proc buildRequest(endpoint: string, apiToken: string = ""): JsonNode =
     var parameters = initTable[string, string]()
     return buildRequest(endpoint, parameters, apiToken)
 
-proc getItemDetails(ids: seq[int]): Table[int, string] =
-    let strIds = ids.mapIt(string, $it).join(",")
-    var parameters = {"ids": strIds}.toTable
-    result = initTable[int, string]()
+proc collectIds(equipment: JsonNode, key: string = "id"): seq[int] =
+    result = newSeq[int]()
+    for eq in equipment.elems:
+        if eq.hasKey(key):
+            result.add(int(eq[key].num))
 
-    let payload = buildRequest("items", parameters)
-    for itemNode in payload.elems:
-        result.add(int(itemNode["id"].num), itemNode["name"].str)
+proc getItemDetails(equipment: JsonNode, key: string = "id", endpoint: string = "items"): Table[int, string] =
+    let ids = collectIds(equipment, key)
+    result = initTable[int, string]()
+    let strIds = ids.mapIt(string, $it).join(",")
+    if strIds.len > 0:
+        var parameters = {"ids": strIds}.toTable
+        let payload = buildRequest(endpoint, parameters)
+        for itemNode in payload.elems:
+            result.add(int(itemNode["id"].num), itemNode["name"].str)
 
 proc parseCharacters(apiToken: string): seq[string] =
     let payload = buildRequest("characters", apiToken=apiToken)
     return payload.mapIt(string, it.str)
+
+let skinnableSlots = @["Backpack", "Coat", "Boots", "Gloves", "Helm", "HelmAquatic",
+                       "Leggings", "Shoulders", "WeaponA1", "WeaponA2",
+                       "WeaponB1", "WeaponB2", "WeaponAquaticA", "WeaponAquaticB"]
 
 proc getCharacterDetails(apiToken: string, characterName: string): string =
     let
@@ -52,16 +63,19 @@ proc getCharacterDetails(apiToken: string, characterName: string): string =
 
         deaths = payload["deaths"].num
         age = payload["age"].num
-        avgLifeSpan = age div deaths
-
         level = payload["level"].num
         gender = payload["gender"].str
         race = payload["race"].str
         profession = payload["profession"].str
         equipment = payload["equipment"]
-        equipmentDetails = getItemDetails(equipment.mapIt(int, int(it["id"].num)))
+        equipmentDetails = getItemDetails(equipment)
+        skinDetails = getItemDetails(equipment, "skin", "skins")
     var
+        avgLifeSpan: int64 = 0
         res: seq[string] = newSeq[string]()
+
+    if deaths > 0:
+        avgLifeSpan = age div deaths
 
     res.add("$# ($#):" % [name, $ level])
     res.add("    Level $# $# $#" % [gender, race, profession])
@@ -72,11 +86,17 @@ proc getCharacterDetails(apiToken: string, characterName: string): string =
         let
             id = int(equip["id"].num)
             slot = equip["slot"].str
-            name = equipmentDetails[id]
+        var line = "        $#:" % [slot]
+        if equip.hasKey("skin"):
+            let skin = int(equip["skin"].num)
+            if skinDetails.hasKey(skin):
+                line &= " $#" % [skinDetails[skin]]
         if equipmentDetails.hasKey(id):
-            res.add("        $#: $#" % [slot, name])
-        else:
-            res.add("        $#: $#" % [slot, $ id])
+            if slot in skinnableSlots:
+                line &= " ($#)" % [equipmentDetails[id]]
+            else:
+                line &= " $#" % [equipmentDetails[id]]
+        res.add(line)
     return res.join("\n")
 
 when isMainModule:
