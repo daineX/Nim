@@ -15,7 +15,7 @@ type
 #         time_point_ns*: culong
     Bytes* = object
         len*: csize
-        bytes*: pointer
+        bytes*: cstring
 #     ConnectionStateEnum* = enum
 #         CONNECTION_STATE_IDLE = 0
 #         CONNECTION_STATE_INITIAL = 1
@@ -52,16 +52,16 @@ type
     Method* {.final, pure.} = object
         id: cuint
         decoded: pointer
-#     PoolBlockList* {.final, pure.} = object
-#         num_blocks*: cint
-#         blocklist*: ptr pointer
-#     Pool* {.final, pure.} = object
-#         pagesize*: csize
-#         pages*: PoolBlockList
-#         lage_blocks*: PoolBlockList
-#         next_page*: cint
-#         alloc_block*: ptr cchar
-#         alloc_size*: csize
+    PoolBlockList* {.final, pure.} = object
+        num_blocks*: cint
+        blocklist*: ptr pointer
+    Pool* {.final, pure.} = object
+        pagesize*: csize
+        pages*: PoolBlockList
+        lage_blocks*: PoolBlockList
+        next_page*: cint
+        alloc_block*: ptr cchar
+        alloc_size*: csize
 #     PoolTableEntry* {.final, pure.} = object
 #         next*: ptr PoolTableEntry
 #         pool*: Pool
@@ -118,6 +118,22 @@ type
         AMQP_SASL_METHOD_PLAIN = 0
         AMQP_SASL_METHOD_EXTERNAL = 1
 
+    Message* = object
+        body*: Bytes
+        properties*: pointer
+        pool: Pool
+
+    Channel* = cushort
+    Envelope* = object
+        channel: Channel
+        consumer_tag*: Bytes
+        delivery_tag*: culong
+        redelivered*: cuchar
+        exchange*: Bytes
+        routing_key*: Bytes
+        message*: Message
+    ConsumeOK = object
+        consumer_tag*: ptr Bytes
 
 proc new_connection: PConnectionState {.cdecl, importc: "amqp_new_connection", dynlib: rmqdll.}
 proc tcp_socket_new(state: PConnectionState): PSocket {.cdecl, importc: "amqp_tcp_socket_new", dynlib: rmqdll.}
@@ -126,8 +142,18 @@ proc login(state: PConnectionState, vhost: cstring, channel_max: cint, frame_max
 proc error_string2(err: int): cstring {.cdecl, importc: "amqp_error_string2", dynlib: rmqdll.}
 proc channel_open(conn: PConnectionState, channel: int): int {.cdecl, importc: "amqp_channel_open", dynlib: rmqdll.}
 proc get_rpc_reply(conn: PConnectionState): RPCReply {.cdecl, importc: "amqp_get_rpc_reply", dynlib: rmqdll.}
-proc basic_consume(conn: PConnectionState, channel: int, queue: Bytes, consumer_tag: Bytes, no_local: cuchar, no_ack: cuchar, exclusive: cuchar, arguments: Table) {.cdecl, importc: "amqp_basic_consume", dynlib: rmqdll.}
+proc basic_consume(conn: PConnectionState, channel: int, queue: Bytes, consumer_tag: Bytes, no_local: cuchar, no_ack: cuchar, exclusive: cuchar, arguments: Table): ConsumeOK {.cdecl, importc: "amqp_basic_consume", dynlib: rmqdll.}
 proc cstring_bytes(cstr: cstring): Bytes {.cdecl, importc: "amqp_cstring_bytes", dynlib: rmqdll.}
+proc consume_message(conn: PConnectionState, envelope: ptr Envelope, nothing: pointer, noting_again: int): RPCReply {.cdecl, importc: "amqp_consume_message", dynlib: rmqdll.}
+
+
+# proc stringToBytes(st: string): Bytes =
+#     return Bytes(len: st.length, bytes: cstring(st))
+#
+proc BytesToString(b: Bytes): string =
+    return ($ b.bytes)[0..b.len - 1]
+proc BytesToString(b: ptr Bytes): string =
+    return ($ b.bytes)[0..b.len - 1]
 
 when isMainModule:
     var conn = new_connection()
@@ -137,9 +163,20 @@ when isMainModule:
     var reply = login(conn, "/", 0, 131072, 0, SASL_METHOD_ENUM.AMQP_SASL_METHOD_PLAIN, "guest", "guest")
     if reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_LIBRARY_EXCEPTION:
         echo ($ error_string2(reply.library_error))
-    discard channel_open(conn, 1)
+    discard channel_open(conn, 20)
     reply = get_rpc_reply(conn)
     assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
 
-    basic_consume(conn, 1, cstring_bytes("celery:http_dispatch"), Bytes(0, null), 0, 0, 0, Table(0, null))
+    var envelope: Envelope
+
+    var res = consume_message(conn, addr envelope, nil, 0)
+
+    echo ($ envelope.message.body)
+
+#     var consumer_tag = Bytes(len: 3, bytes: "Foo")
+#
+#     let ok = basic_consume(conn, 20, cstring_bytes("celery:http_dispatch"), consumer_tag, cuchar(0), cuchar(0), cuchar(0), Table(num_entries: 0, entries: nil))
+#     assert BytesToString(ok.consumer_tag) == BytesToString(consumer_tag)
+#     reply = get_rpc_reply(conn)
+#     assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
 
