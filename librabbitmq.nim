@@ -15,7 +15,7 @@ type
 #         time_point_ns*: culong
     Bytes* = object
         len*: csize
-        bytes*: cstring
+        bytes*: ptr cchar
 #     ConnectionStateEnum* = enum
 #         CONNECTION_STATE_IDLE = 0
 #         CONNECTION_STATE_INITIAL = 1
@@ -118,13 +118,29 @@ type
         AMQP_SASL_METHOD_PLAIN = 0
         AMQP_SASL_METHOD_EXTERNAL = 1
 
-    Message* = object
+    Properties* {.final, pure.} = object
+        flags: cuint
+        content_type: Bytes
+        content_encoding: Bytes
+        headers: Table
+        delivery_mode: cushort
+        priority: cushort
+        correlation_id: Bytes
+        reply_to: Bytes
+        expiration: Bytes
+        message_id: Bytes
+        timestamp: culong
+        type_type: Bytes
+        user_id: Bytes
+        app_id: Bytes
+
+    Message* {.final, pure.} = object
+        properties*: Properties
         body*: Bytes
-        properties*: pointer
         pool: Pool
 
     Channel* = cushort
-    Envelope* = object
+    Envelope* {.final, pure.}= object
         channel: Channel
         consumer_tag*: Bytes
         delivery_tag*: culong
@@ -134,26 +150,55 @@ type
         message*: Message
     ConsumeOK = object
         consumer_tag*: ptr Bytes
+    Boolean = cuchar
+    QueueDeclareOK = object
+        queue: Bytes
+        message_count: cuint
+        consumer_count: cuint
+
+const
+    empty_bytes = Bytes(len: 0, bytes: nil)
+    empty_table = Table(num_entries: 0, entries: nil)
+    AMQP_BASIC_CONTENT_TYPE_FLAG = (1 shl 15)
+    AMQP_BASIC_CONTENT_ENCODING_FLAG = (1 shl 14)
+    AMQP_BASIC_HEADERS_FLAG = (1 shl 13)
+    AMQP_BASIC_DELIVERY_MODE_FLAG = (1 shl 12)
+    AMQP_BASIC_PRIORITY_FLAG = (1 shl 11)
+    AMQP_BASIC_CORRELATION_ID_FLAG = (1 shl 10)
+    AMQP_BASIC_REPLY_TO_FLAG= (1 shl 9)
+    AMQP_BASIC_EXPIRATION_FLAG= (1 shl 8)
+    AMQP_BASIC_MESSAGE_ID_FLAG= (1 shl 7)
+    AMQP_BASIC_TIMESTAMP_FLAG= (1 shl 6)
+    AMQP_BASIC_TYPE_FLAG= (1 shl 5)
+    AMQP_BASIC_USER_ID_FLAG= (1 shl 4)
+    AMQP_BASIC_APP_ID_FLAG= (1 shl 3)
+    AMQP_BASIC_CLUSTER_ID_FLAG= (1 shl 2)
 
 proc new_connection: PConnectionState {.cdecl, importc: "amqp_new_connection", dynlib: rmqdll.}
 proc tcp_socket_new(state: PConnectionState): PSocket {.cdecl, importc: "amqp_tcp_socket_new", dynlib: rmqdll.}
 proc socket_open(self: PSocket, host: cstring, port: cint): int {.cdecl, importc: "amqp_socket_open", dynlib: rmqdll.}
 proc login(state: PConnectionState, vhost: cstring, channel_max: cint, frame_max: cint, heartbeat: cint, sasl_method: SASL_METHOD_ENUM): RPCReply {.cdecl, importc: "amqp_login", dynlib: rmqdll, varargs.}
 proc error_string2(err: int): cstring {.cdecl, importc: "amqp_error_string2", dynlib: rmqdll.}
-proc channel_open(conn: PConnectionState, channel: int): int {.cdecl, importc: "amqp_channel_open", dynlib: rmqdll.}
+proc channel_open(conn: PConnectionState, channel: Channel): int {.cdecl, importc: "amqp_channel_open", dynlib: rmqdll.}
 proc get_rpc_reply(conn: PConnectionState): RPCReply {.cdecl, importc: "amqp_get_rpc_reply", dynlib: rmqdll.}
-proc basic_consume(conn: PConnectionState, channel: int, queue: Bytes, consumer_tag: Bytes, no_local: cuchar, no_ack: cuchar, exclusive: cuchar, arguments: Table): ConsumeOK {.cdecl, importc: "amqp_basic_consume", dynlib: rmqdll.}
+proc basic_consume(conn: PConnectionState, channel: Channel, queue: Bytes, consumer_tag: Bytes, no_local: Boolean, no_ack: Boolean, exclusive: Boolean, arguments: Table): ConsumeOK {.cdecl, importc: "amqp_basic_consume", dynlib: rmqdll.}
 proc cstring_bytes(cstr: cstring): Bytes {.cdecl, importc: "amqp_cstring_bytes", dynlib: rmqdll.}
-proc consume_message(conn: PConnectionState, envelope: ptr Envelope, nothing: pointer, noting_again: int): RPCReply {.cdecl, importc: "amqp_consume_message", dynlib: rmqdll.}
+proc queue_declare(conn: PConnectionState, channel: Channel, queue: Bytes, passive: Boolean, durable: Boolean, exclusive: Boolean, auto_delete: Boolean, arguments: Table): ptr QueueDeclareOK {.cdecl, importc: "amqp_queue_declare", dynlib: rmqdll.}
+proc queue_bind(conn: PConnectionState, channel: Channel, queue: Bytes, exchange: Bytes, bindingKey: Bytes, arguments: Table) {.cdecl, importc: "amqp_queue_bind", dynlib: rmqdll.}
+proc consume_message(conn: PConnectionState, envelope: ptr Envelope, nothing: cint, noting_again: cint): RPCReply {.cdecl, importc: "amqp_consume_message", dynlib: rmqdll.}
+proc maybe_release_buffers(conn: PConnectionState) {.cdecl, importc: "amqp_maybe_release_buffers", dynlib: rmqdll.}
 
 
 # proc stringToBytes(st: string): Bytes =
-#     return Bytes(len: st.length, bytes: cstring(st))
+#     return Bytes(len: st.length, bytes: addr cstring(st))
 #
-proc BytesToString(b: Bytes): string =
-    return ($ b.bytes)[0..b.len - 1]
-proc BytesToString(b: ptr Bytes): string =
-    return ($ b.bytes)[0..b.len - 1]
+
+proc `$`(b: Bytes): string =
+    if b.len > 0:
+        return ($ b.bytes)[0..b.len - 1]
+    else:
+        return ""
+
 
 when isMainModule:
     var conn = new_connection()
@@ -163,20 +208,29 @@ when isMainModule:
     var reply = login(conn, "/", 0, 131072, 0, SASL_METHOD_ENUM.AMQP_SASL_METHOD_PLAIN, "guest", "guest")
     if reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_LIBRARY_EXCEPTION:
         echo ($ error_string2(reply.library_error))
-    discard channel_open(conn, 20)
+    discard channel_open(conn, 1)
     reply = get_rpc_reply(conn)
     assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
 
+    let ok = basic_consume(conn, 1, cstring_bytes("celery:http_dispatch"), cstring_bytes("Foo"), cuchar(0), cuchar(0), cuchar(0), empty_table)
+    reply = get_rpc_reply(conn)
+    assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
+
+    maybe_release_buffers(conn)
+
     var envelope: Envelope
 
-    var res = consume_message(conn, addr envelope, nil, 0)
+    let reply_ok = consume_message(conn, addr envelope, 0, 0)
+    assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
 
-    echo ($ envelope.message.body)
+    echo ($ envelope.consumer_tag)
+    echo ($ envelope.delivery_tag)
+#     echo ($ envelope.routing_key)
+#     echo ($ envelope.message.pool.pagesize)
+    echo ($ envelope.message.properties.flags)
+#     echo ($ envelope.message.properties.content_type)
 
-#     var consumer_tag = Bytes(len: 3, bytes: "Foo")
-#
-#     let ok = basic_consume(conn, 20, cstring_bytes("celery:http_dispatch"), consumer_tag, cuchar(0), cuchar(0), cuchar(0), Table(num_entries: 0, entries: nil))
-#     assert BytesToString(ok.consumer_tag) == BytesToString(consumer_tag)
-#     reply = get_rpc_reply(conn)
-#     assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
-
+    echo ($ envelope.message.properties.delivery_mode)
+    echo ($ envelope.message.properties.timestamp)
+    echo ($ envelope.message.properties.user_id)
+#     echo ($ envelope.message.body.len)
