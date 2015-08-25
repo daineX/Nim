@@ -9,6 +9,7 @@ else:
   const
     rmqdll* = "librabbitmq.so.1"
 
+from posix import Timeval
 
 type
 #     Time* = object
@@ -49,6 +50,29 @@ type
 #     Link* {.final, pure.} = object
 #         next: ptr Link
 #         data: pointer
+
+    FramePayloadProperties* = object
+        class_id: cushort
+        body_size: culong
+        decoded: pointer
+        raw: Bytes
+
+    FramePayloadProtocolHeader* = object
+        transport_high: cuchar
+        transport_low: cuchar
+        protocol_version_major: cuchar
+        protocol_version_minor: cuchar
+
+    FramePayload* {.union.} = object
+        method_method: Method
+        properties: FramePayloadProperties
+        body_fragment: Bytes
+        protocol_header: FramePayloadProtocolHeader
+    Frame* {.final, pure.} = object
+        frame_type: cuchar
+        channel: Channel
+        payload: FramePayload
+
     Method* {.final, pure.} = object
         id: cuint
         decoded: pointer
@@ -137,10 +161,10 @@ type
     Message* {.final, pure.} = object
         properties*: Properties
         body*: Bytes
-        pool: Pool
+        pool*: Pool
 
     Channel* = cushort
-    Envelope* {.final, pure.}= object
+    Envelope* {.final.} = object
         channel: Channel
         consumer_tag*: Bytes
         delivery_tag*: culong
@@ -185,13 +209,15 @@ proc basic_consume(conn: PConnectionState, channel: Channel, queue: Bytes, consu
 proc cstring_bytes(cstr: cstring): Bytes {.cdecl, importc: "amqp_cstring_bytes", dynlib: rmqdll.}
 proc queue_declare(conn: PConnectionState, channel: Channel, queue: Bytes, passive: Boolean, durable: Boolean, exclusive: Boolean, auto_delete: Boolean, arguments: Table): ptr QueueDeclareOK {.cdecl, importc: "amqp_queue_declare", dynlib: rmqdll.}
 proc queue_bind(conn: PConnectionState, channel: Channel, queue: Bytes, exchange: Bytes, bindingKey: Bytes, arguments: Table) {.cdecl, importc: "amqp_queue_bind", dynlib: rmqdll.}
-proc consume_message(conn: PConnectionState, envelope: ptr Envelope, nothing: cint, noting_again: cint): RPCReply {.cdecl, importc: "amqp_consume_message", dynlib: rmqdll.}
+proc consume_message(conn: PConnectionState, envelope: ptr Envelope, timeout: ptr Timeval, flags: cint): RPCReply {.cdecl, importc: "amqp_consume_message", dynlib: rmqdll.}
 proc maybe_release_buffers(conn: PConnectionState) {.cdecl, importc: "amqp_maybe_release_buffers", dynlib: rmqdll.}
+proc read_message(conn: PConnectionState, channel: Channel, message: ptr Message, n: cuint): RPCReply {.cdecl, importc: "amqp_read_message", dynlib: rmqdll.}
+proc destroy_envelope(envelope: ptr Envelope) {.cdecl, importc: "amqp_destroy_envelope", dynlib: rmqdll.}
 
+proc bytes_malloc_dup(b: Bytes): Bytes {.cdecl, importc: "amqp_bytes_malloc_dup", dynlib: rmqdll.}
 
-# proc stringToBytes(st: string): Bytes =
-#     return Bytes(len: st.length, bytes: addr cstring(st))
-#
+proc simple_wait_frame_noblock(conn: PConnectionState, frame: ptr Frame, timeout: ptr Timeval): cint {.cdecl, importc: "amqp_simple_wait_frame_noblock", dynlib: rmqdll.}
+
 
 proc `$`(b: Bytes): string =
     if b.len > 0:
@@ -199,38 +225,47 @@ proc `$`(b: Bytes): string =
     else:
         return ""
 
+proc check_reply(reply: RPCReply) =
+    if reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_LIBRARY_EXCEPTION:
+        echo error_string2(reply.library_error)
+    assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
+
+proc check(conn: PConnectionState) =
+    check_reply(get_rpc_reply(conn))
+
+
 
 when isMainModule:
+    let queuename = cstring_bytes("celery:http_dispatch")
+    let exchange = cstring_bytes("celery:http_dispatch")
+
     var conn = new_connection()
     var socket = tcp_socket_new(conn)
     var status = socket_open(socket, "localhost", 5672)
     assert (status == 0)
-    var reply = login(conn, "/", 0, 131072, 0, SASL_METHOD_ENUM.AMQP_SASL_METHOD_PLAIN, "guest", "guest")
-    if reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_LIBRARY_EXCEPTION:
-        echo ($ error_string2(reply.library_error))
+
+    check_reply(login(conn, "/", 0, 131072, 0, SASL_METHOD_ENUM.AMQP_SASL_METHOD_PLAIN, "guest", "guest"))
+
     discard channel_open(conn, 1)
-    reply = get_rpc_reply(conn)
-    assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
+    check(conn)
 
-    let ok = basic_consume(conn, 1, cstring_bytes("celery:http_dispatch"), cstring_bytes("Foo"), cuchar(0), cuchar(0), cuchar(0), empty_table)
-    reply = get_rpc_reply(conn)
-    assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
+    let ok = basic_consume(conn, 1, queuename, empty_bytes, cuchar(0), cuchar(1), cuchar(0), empty_table)
+    check(conn)
 
-    maybe_release_buffers(conn)
 
-    var envelope: Envelope
+    while true:
+        var envelope: Envelope
+        var frame: Frame
+        var message: Message
+        maybe_release_buffers(conn)
 
-    let reply_ok = consume_message(conn, addr envelope, 0, 0)
-    assert reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL
+        check_reply(consume_message(conn, addr envelope, nil, 0))
 
-    echo ($ envelope.consumer_tag)
-    echo ($ envelope.delivery_tag)
-#     echo ($ envelope.routing_key)
-#     echo ($ envelope.message.pool.pagesize)
-    echo ($ envelope.message.properties.flags)
-#     echo ($ envelope.message.properties.content_type)
+        echo ($ envelope.consumer_tag)
+        echo ($ envelope.delivery_tag)
+        echo ($ envelope.exchange)
+        echo ($ envelope.routing_key)
 
-    echo ($ envelope.message.properties.delivery_mode)
-    echo ($ envelope.message.properties.timestamp)
-    echo ($ envelope.message.properties.user_id)
-#     echo ($ envelope.message.body.len)
+        echo ($ envelope.message.body)
+
+        destroy_envelope(addr envelope)
