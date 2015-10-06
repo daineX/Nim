@@ -157,6 +157,7 @@ type
         type_type: Bytes
         user_id: Bytes
         app_id: Bytes
+        cluster_id: Bytes
 
     Message* {.final, pure.} = object
         properties*: Properties
@@ -255,17 +256,13 @@ when isMainModule:
 
     while true:
         var envelope: Envelope
-        var frame: Frame
-        var message: Message
         maybe_release_buffers(conn)
-
         check_reply(consume_message(conn, addr envelope, nil, 0))
 
         echo ($ envelope.consumer_tag)
         echo ($ envelope.delivery_tag)
         echo ($ envelope.exchange)
         echo ($ envelope.routing_key)
-
         echo ($ envelope.message.body)
 
         destroy_envelope(addr envelope)
