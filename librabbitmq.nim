@@ -234,35 +234,31 @@ proc check_reply(reply: RPCReply) =
 proc check(conn: PConnectionState) =
     check_reply(get_rpc_reply(conn))
 
-
-
-when isMainModule:
-    let queuename = cstring_bytes("celery:http_dispatch")
-    let exchange = cstring_bytes("celery:http_dispatch")
-
+proc connect(host: cstring, port: cint, vhost: cstring, user: cstring, password: cstring): PConnectionState =
     var conn = new_connection()
     var socket = tcp_socket_new(conn)
-    var status = socket_open(socket, "localhost", 5672)
-    assert (status == 0)
-
-    check_reply(login(conn, "/", 0, 131072, 0, SASL_METHOD_ENUM.AMQP_SASL_METHOD_PLAIN, "guest", "guest"))
-
+    assert (socket_open(socket, host, port) == 0)
+    check_reply(login(conn, vhost, 0, 131072, 0, SASL_METHOD_ENUM.AMQP_SASL_METHOD_PLAIN, user, password))
     discard channel_open(conn, 1)
     check(conn)
+    return conn
 
-    let ok = basic_consume(conn, 1, queuename, empty_bytes, cuchar(0), cuchar(1), cuchar(0), empty_table)
+proc setup_queue(conn: PConnectionState, queuename: string, no_local: bool, no_ack: bool, exclusive: bool) =
+    discard basic_consume(conn, 1, cstring_bytes(queuename), empty_bytes, cuchar(no_local), cuchar(no_ack), cuchar(exclusive), empty_table)
     check(conn)
 
+proc get_message(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cint = 0): string =
+    var envelope: Envelope
+    maybe_release_buffers(conn)
+    check_reply(consume_message(conn, addr envelope, timeout, flags))
+    var msg = $ envelope.message.body
+    destroy_envelope(addr envelope)
+    return msg
+
+when isMainModule:
+    var conn = connect("localhost", 5672, "/", "guest", "guest")
+
+    setup_queue(conn, "celery:http_dispatch", false, true, false)
 
     while true:
-        var envelope: Envelope
-        maybe_release_buffers(conn)
-        check_reply(consume_message(conn, addr envelope, nil, 0))
-
-        echo ($ envelope.consumer_tag)
-        echo ($ envelope.delivery_tag)
-        echo ($ envelope.exchange)
-        echo ($ envelope.routing_key)
-        echo ($ envelope.message.body)
-
-        destroy_envelope(addr envelope)
+        echo get_message(conn)
