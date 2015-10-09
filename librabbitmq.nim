@@ -135,6 +135,7 @@ const
     AMQP_BASIC_CLUSTER_ID_FLAG= (1 shl 2)
 
 proc new_connection: PConnectionState {.cdecl, importc: "amqp_new_connection", dynlib: rmqdll.}
+proc destroy_connection(conn: PConnectionState) {.cdecl, importc: "amqp_destroy_connection", dynlib: rmqdll.}
 proc tcp_socket_new(state: PConnectionState): PSocket {.cdecl, importc: "amqp_tcp_socket_new", dynlib: rmqdll.}
 proc socket_open(self: PSocket, host: cstring, port: cint): int {.cdecl, importc: "amqp_socket_open", dynlib: rmqdll.}
 proc login(state: PConnectionState, vhost: cstring, channel_max: cint, frame_max: cint, heartbeat: cint, sasl_method: SASL_METHOD_ENUM): RPCReply {.cdecl, importc: "amqp_login", dynlib: rmqdll, varargs.}
@@ -199,8 +200,13 @@ proc ack_message(conn: PConnectionState, msg: BasicMessage) =
 when isMainModule:
     var conn = connect("localhost", 5672, "/", "guest", "guest")
 
-    setup_queue(conn, "celery:http_dispatch")
+    proc handle_keyboard_interrupt() {.noconv.} =
+        destroy_connection(conn)
+        echo "Destroyed connection."
+        quit 0
+    setControlCHook(handle_keyboard_interrupt)
 
+    setup_queue(conn, "celery:http_dispatch")
     while true:
         let msg = get_message(conn)
         echo msg.content
