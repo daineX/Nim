@@ -180,7 +180,7 @@ proc connect(host: cstring, port: cint, vhost: cstring, user: cstring, password:
     check(conn)
     return conn
 
-proc setup_queue(conn: PConnectionState, queuename: string, no_local: bool, no_ack: bool, exclusive: bool) =
+proc setup_queue(conn: PConnectionState, queuename: string, no_local: bool = false, no_ack: bool = false, exclusive: bool = false) =
     let ok = basic_consume(conn, 1, cstring_bytes(queuename), empty_bytes, cuchar(no_local), cuchar(no_ack), cuchar(exclusive), empty_table)
     check(conn)
 
@@ -199,7 +199,7 @@ proc ack_message(conn: PConnectionState, msg: BasicMessage) =
 when isMainModule:
     var conn = connect("localhost", 5672, "/", "guest", "guest")
 
-    setup_queue(conn, "celery:http_dispatch", false, false, false)
+    setup_queue(conn, "celery:http_dispatch")
 
     while true:
         let msg = get_message(conn)
