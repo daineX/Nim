@@ -180,6 +180,9 @@ type
         queue: Bytes
         message_count: cuint
         consumer_count: cuint
+    BasicMessage* = object
+        content: string
+        delivery_tag: culong
 
 const
     empty_bytes = Bytes(len: 0, bytes: nil)
@@ -219,6 +222,8 @@ proc bytes_malloc_dup(b: Bytes): Bytes {.cdecl, importc: "amqp_bytes_malloc_dup"
 
 proc simple_wait_frame_noblock(conn: PConnectionState, frame: ptr Frame, timeout: ptr Timeval): cint {.cdecl, importc: "amqp_simple_wait_frame_noblock", dynlib: rmqdll.}
 
+proc basic_ack(conn: PConnectionState, channel: Channel, delivery_tag: culong, multiple: Boolean): cint {.cdecl, importc: "amqp_basic_ack", dynlib: rmqdll.}
+
 
 proc `$`(b: Bytes): string =
     if b.len > 0:
@@ -244,21 +249,27 @@ proc connect(host: cstring, port: cint, vhost: cstring, user: cstring, password:
     return conn
 
 proc setup_queue(conn: PConnectionState, queuename: string, no_local: bool, no_ack: bool, exclusive: bool) =
-    discard basic_consume(conn, 1, cstring_bytes(queuename), empty_bytes, cuchar(no_local), cuchar(no_ack), cuchar(exclusive), empty_table)
+    let ok = basic_consume(conn, 1, cstring_bytes(queuename), empty_bytes, cuchar(no_local), cuchar(no_ack), cuchar(exclusive), empty_table)
     check(conn)
 
-proc get_message(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cint = 0): string =
+proc get_message(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cint = 0): BasicMessage =
     var envelope: Envelope
     maybe_release_buffers(conn)
     check_reply(consume_message(conn, addr envelope, timeout, flags))
-    var msg = $ envelope.message.body
+    var msg = BasicMessage(content: $ envelope.message.body, delivery_tag: envelope.delivery_tag)
     destroy_envelope(addr envelope)
     return msg
+
+proc ack_message(conn: PConnectionState, msg: BasicMessage) =
+    let ok = basic_ack(conn, 1, msg.delivery_tag, cuchar(0))
+    assert (ok == 0)
 
 when isMainModule:
     var conn = connect("localhost", 5672, "/", "guest", "guest")
 
-    setup_queue(conn, "celery:http_dispatch", false, true, false)
+    setup_queue(conn, "celery:http_dispatch", false, false, false)
 
     while true:
-        echo get_message(conn)
+        let msg = get_message(conn)
+        echo msg.content
+        ack_message(conn, msg)
