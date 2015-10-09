@@ -12,45 +12,9 @@ else:
 from posix import Timeval
 
 type
-#     Time* = object
-#         time_point_ns*: culong
     Bytes* = object
         len*: csize
         bytes*: ptr cchar
-#     ConnectionStateEnum* = enum
-#         CONNECTION_STATE_IDLE = 0
-#         CONNECTION_STATE_INITIAL = 1
-#         CONNECTION_STATE_HEADER = 2
-#         CONNECTION_STATE_BODY = 3
-#     Decimal* {.final, pure.} = object
-#         decimals*: cuchar
-#         value*: cuint
-#     FieldValueUnion* {.union.} = object
-#         boolean*: cint
-#         i8*: cchar
-#         u8*: cuchar
-#         i16*: cshort
-#         u16*: cushort
-#         i32*: cint
-#         u32*: cuint
-#         i64*: clong
-#         u64*: culong
-#         f32*: cfloat
-#         f64*: cdouble
-#         decimal*: Decimal
-#         bytes*: Bytes
-#         table*: Table
-#         array*: Array
-#     Array* {.final, pure.} = object
-#         num_entries*: cint
-#         entries: ptr FieldValue
-#     FieldValue* {.final, pure.} = object
-#         kind*: cchar
-#         value*: FieldValueUnion
-#     Link* {.final, pure.} = object
-#         next: ptr Link
-#         data: pointer
-
     FramePayloadProperties* = object
         class_id: cushort
         body_size: culong
@@ -86,9 +50,6 @@ type
         next_page*: cint
         alloc_block*: ptr cchar
         alloc_size*: csize
-#     PoolTableEntry* {.final, pure.} = object
-#         next*: ptr PoolTableEntry
-#         pool*: Pool
     ResponseTypeEnum* = enum
         AMQP_RESPONSE_NONE
         AMQP_RESPONSE_NORMAL
@@ -105,37 +66,8 @@ type
         key*: Bytes
 
     Socket* {.final, pure.} = object
-#         klass*: pointer
-#         sockfd: cint
-#         internal_error: cint
-#         state: cint
     PSocket* = ptr Socket
     ConnectionState* {.final, pure.} = object
-#         pool_table*: ptr PoolTableEntry
-#         state*: ConnectionStateEnum
-#         channel_max*: cint
-#         frame_max*: cint
-#         heartbeat*: cint
-#         next_recv_heartbeat*: Time
-#         next_send_heartbeat*: Time
-#         header_buffer*: cchar
-#         inbound_buffer*: Bytes
-#         inbound_offset*: csize
-#         target_size*: csize
-#
-#         outbound_buffer*: Bytes
-#         socket*: PSocket
-#
-#         sock_inbound_buffer*: Bytes
-#         sock_inbound_offset*: csize
-#         sock_inbound_limit*: csize
-#
-#         first_queued_frame*: ptr Link
-#         last_queued_frame*: ptr Link
-#         most_recent_api_result*: RPCReply
-#         server_properties*: Table
-#         client_properties*: Table
-#         properties_pool*: Pool
     PConnectionState* = ptr ConnectionState
     SASL_METHOD_ENUM = enum
         AMQP_SASL_METHOD_UNDEFINED = -1
