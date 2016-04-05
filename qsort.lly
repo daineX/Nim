@@ -1,0 +1,35 @@
+
+define list_concat[A](a: List[A], b:List[A]):List[A]
+{
+    var result:List[A] = []
+    a.each{|obj| result.push(obj)}
+    b.each{|obj| result.push(obj)}
+    return result
+}
+
+define qsort[A](l: List[A]): List[A]
+{
+    if l.size() <= 1:
+        return l
+    var pivot = l.shift()
+    var compare = {|n:A| n <= pivot}
+    var left = l.select(compare) |> qsort
+    var right = l.reject(compare) |> qsort
+
+    return list_concat(left, list_concat([pivot], right))
+}
+
+define swap(l:List[A], a:Integer, b:Integer)
+{
+    var temp = l[a]
+    l[a] = l[b]
+    l[b] = temp
+}
+
+define main
+{
+    var some_list = [9,3,2,0,7,4,6,5,8,1]
+    qsort(some_list) |> print
+}
+
+main()
