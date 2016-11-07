@@ -1,4 +1,4 @@
-from math import randomize, random
+from random import randomize, random
 from sequtils import mapIt
 from times import epochTime
 import strutils
