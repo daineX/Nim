@@ -69,7 +69,7 @@ proc formatTime(seconds: int64): string =
                                    intToStr((seconds mod 3600) div 60, 2),
                                    intToStr(seconds mod 60, 2)]
 
-proc getCharacterProfession(apiToken: string, characterName: string): tuple[profession:string, age: int64] =
+proc getCharacterProfession(apiToken: string, characterName: string): (string, int64) =
     let
         payload = buildRequest($(parseUri("characters") / encodeUrl(characterName).replace("+", "%20")), apiToken=apiToken)
         age = payload["age"].num
