@@ -1,6 +1,7 @@
 # from tables import TableRef, initTable, add, pairs
 import tables
-from httpclient import request
+from httpclient import newHttpClient, get
+from cgi import encodeUrl
 from uri import parseUri, `/`, `$`
 from json import items, JsonNode, parseJson, `[]`, `$`, hasKey
 from strutils import join, replace, startsWith, `%`, intToStr
@@ -23,9 +24,10 @@ proc buildRequest(endpoint: string, parameters: var Table[string, string], apiTo
                 requestUrl &= "&"
             inc idx
 
-    var resp = request(requestURL)
+    var client = newHttpClient()
+    var resp = client.get(requestURL)
     if not resp.status.startsWith("2"):
-        raise newException(RequestFailed, resp.status)
+        raise newException(RequestFailed, "$#: $#" % [requestURL, resp.status])
     return parseJson(resp.body)
 
 proc buildRequest(endpoint: string, apiToken: string = ""): JsonNode =
@@ -67,9 +69,16 @@ proc formatTime(seconds: int64): string =
                                    intToStr((seconds mod 3600) div 60, 2),
                                    intToStr(seconds mod 60, 2)]
 
+proc getCharacterProfession(apiToken: string, characterName: string): tuple[profession:string, age: int64] =
+    let
+        payload = buildRequest($(parseUri("characters") / encodeUrl(characterName).replace("+", "%20")), apiToken=apiToken)
+        age = payload["age"].num
+        profession = payload["profession"].str
+    return (profession, age)
+
 proc getCharacterDetails(apiToken: string, characterName: string): string =
     let
-        payload = buildRequest($(parseUri("characters") / characterName.replace(" ", "%20")), apiToken=apiToken)
+        payload = buildRequest($(parseUri("characters") / encodeUrl(characterName).replace("+", "%20")), apiToken=apiToken)
         name = payload["name"].str
 
         deaths = payload["deaths"].num
@@ -89,7 +98,9 @@ proc getCharacterDetails(apiToken: string, characterName: string): string =
         avgLifeSpan = age div deaths
 
     res.add("$# ($#):" % [name, $ level])
-    res.add("    Level $# $# $#" % [gender, race, profession])
+    res.add("    $# $# $#" % [gender, race, profession])
+    res.add("    Age: $#" % [formatTime(age)])
+    res.add("    Deaths: $#" % [$ deaths])
     res.add("    Average life-span: $#" % [formatTime(avgLifeSpan)])
 
     res.add("    Equipment:")
@@ -117,8 +128,27 @@ when isMainModule:
         try:
             let apiToken = paramStr(1)
             if paramCount() > 1:
-                let characterName = paramStr(2)
-                echo getCharacterDetails(apiToken, characterName)
+                if paramStr(2) == "--list":
+                    echo parseCharacters(apiToken)
+                elif paramStr(2) == "--playTime":
+                    let characterNames = parseCharacters(apiToken)
+                    var
+                        playTimeByProfession = initTable[string, int64]()
+                        totalPlayTime:int64 = 0
+                    for characterName in characterNames:
+                        let
+                            (profession, age) = getCharacterProfession(apiToken, characterName)
+                        if playTimeByProfession.hasKey(profession):
+                            playTimeByProfession[profession] += age
+                        else:
+                            playTimeByProfession[profession] = age
+                        totalPlayTime += age
+                    echo "Total play-time: $#" % [formatTime(totalPlayTime)]
+                    for profession, age in playTimeByProfession.pairs:
+                        echo "$#: $#" % [profession, formatTime(age)]
+                else:
+                    let characterName = paramStr(2)
+                    echo getCharacterDetails(apiToken, characterName)
             else:
                 let characterNames = parseCharacters(apiToken)
                 for characterName in characterNames:
