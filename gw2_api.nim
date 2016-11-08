@@ -72,10 +72,6 @@ proc getItemDetails(equipment: JsonNode, key: string = "id", endpoint: string = 
             var equipment = EquipmentDetail(id: id, name: itemNode["name"].str, attributes: attributes)
             result.add(id, equipment)
 
-proc parseCharacters(apiToken: string): seq[string] =
-    let payload = buildRequest("characters", apiToken=apiToken)
-    return payload.mapIt(it.str)
-
 proc formatTime(seconds: int64): string =
     result = ""
     if seconds < 60:
@@ -87,25 +83,33 @@ proc formatTime(seconds: int64): string =
                                    intToStr((seconds mod 3600) div 60, 2),
                                    intToStr(seconds mod 60, 2)]
 
-proc getCharacterProfession(apiToken: string, characterName: string): ProfessionPlayTime =
+proc getAllCharacters(apiToken: string): JsonNode =
+    var parameters = {"page": "0"}.toTable
+    return buildRequest("characters", parameters, apiToken=apiToken)
+
+proc getCharacterNames(apiToken: string): seq[string] =
+    return getAllCharacters(apiToken).mapIt($it["name"])
+
+proc getCharacter(apiToken: string, name: string): JsonNode =
+    return buildRequest($(parseUri("characters") / encodeUrl(name).replace("+", "%20")), apiToken=apiToken)
+
+proc getCharacterProfession(payload: JsonNode): ProfessionPlayTime =
     let
-        payload = buildRequest($(parseUri("characters") / encodeUrl(characterName).replace("+", "%20")), apiToken=apiToken)
         playTime = payload["age"].num
         profession = payload["profession"].str
     return (profession, playTime)
 
-proc getCharacterDetails(apiToken: string, characterName: string): string =
+proc getCharacterDetails(character: JsonNode): string =
     let
-        payload = buildRequest($(parseUri("characters") / encodeUrl(characterName).replace("+", "%20")), apiToken=apiToken)
-        name = payload["name"].str
+        name = character["name"].str
 
-        deaths = payload["deaths"].num
-        age = payload["age"].num
-        level = payload["level"].num
-        gender = payload["gender"].str
-        race = payload["race"].str
-        profession = payload["profession"].str
-        equipment = payload["equipment"]
+        deaths = character["deaths"].num
+        age = character["age"].num
+        level = character["level"].num
+        gender = character["gender"].str
+        race = character["race"].str
+        profession = character["profession"].str
+        equipment = character["equipment"]
         equipmentDetails = getItemDetails(equipment)
         skinDetails = getItemDetails(equipment, "skin", "skins")
     var
@@ -117,7 +121,7 @@ proc getCharacterDetails(apiToken: string, characterName: string): string =
 
     res.add("$# ($#):" % [name, $ level])
     res.add("    $# $# $#" % [gender, race, profession])
-    res.add("    Age: $#" % [formatTime(age)])
+    res.add("    Playtime: $#" % [formatTime(age)])
     res.add("    Deaths: $#" % [$ deaths])
     res.add("    Average life-span: $#" % [formatTime(avgLifeSpan)])
 
@@ -149,15 +153,15 @@ proc pad(a, b: string, minWidth: int): int =
     if result < 1:
         result = 1
 
-proc getPlayTime(apiToken: string, characterNames: seq[string]): string =
+proc getPlayTime(allCharacters: JsonNode): string =
     var
         playTimeByProfession = initTable[string, int64]()
         totalPlayTime: int64 = 0
         res: seq[string] = newSeq[string]()
 
-    for characterName in characterNames:
+    for character in allCharacters.elems:
         let
-            (profession, playTime) = getCharacterProfession(apiToken, characterName)
+            (profession, playTime) = getCharacterProfession(character)
         if playTimeByProfession.hasKey(profession):
             playTimeByProfession[profession] += playTime
         else:
@@ -187,17 +191,15 @@ when isMainModule:
             let apiToken = paramStr(1)
             if paramCount() > 1:
                 if paramStr(2) == "--list":
-                    echo parseCharacters(apiToken)
+                    echo getCharacterNames(apiToken)
                 elif paramStr(2) == "--playTime":
-                    let characterNames = parseCharacters(apiToken)
-                    echo getPlayTime(apiToken, characterNames)
+                    echo getPlayTime(getAllCharacters(apiToken))
                 else:
                     let characterName = paramStr(2)
-                    echo getCharacterDetails(apiToken, characterName)
+                    echo getCharacterDetails(getCharacter(apiToken, characterName))
             else:
-                let characterNames = parseCharacters(apiToken)
-                for characterName in characterNames:
-                    echo getCharacterDetails(apiToken, characterName)
+                for character in getAllCharacters(apiToken).elems:
+                    echo getCharacterDetails(character)
         except RequestFailed:
             echo "Request Failed:"
             echo getCurrentExceptionMsg()
