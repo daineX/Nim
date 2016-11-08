@@ -15,6 +15,13 @@ type
     ProfessionPlayTime = tuple
         profession: string
         playTime: int64
+    Attribute = object
+        typ: string
+        value: BiggestInt
+    EquipmentDetail = object
+        id: int
+        name: string
+        attributes: seq[Attribute]
 
 let skinnableSlots = @["Backpack", "Coat", "Boots", "Gloves", "Helm", "HelmAquatic",
                        "Leggings", "Shoulders", "WeaponA1", "WeaponA2",
@@ -49,15 +56,21 @@ proc collectIds(equipment: JsonNode, key: string = "id"): seq[int] =
         if eq.hasKey(key):
             result.add(int(eq[key].num))
 
-proc getItemDetails(equipment: JsonNode, key: string = "id", endpoint: string = "items"): Table[int, string] =
+proc getItemDetails(equipment: JsonNode, key: string = "id", endpoint: string = "items"): Table[int, EquipmentDetail] =
     let ids = collectIds(equipment, key)
-    result = initTable[int, string]()
+    result = initTable[int, EquipmentDetail]()
     let strIds = ids.mapIt($it).join(",")
     if strIds.len > 0:
         var parameters = {"ids": strIds}.toTable
         let payload = buildRequest(endpoint, parameters)
         for itemNode in payload.elems:
-            result.add(int(itemNode["id"].num), itemNode["name"].str)
+            let id = int(itemNode["id"].num)
+            var attributes = newSeq[Attribute]()
+            if itemNode.hasKey("details") and itemNode["details"].hasKey("infix_upgrade"):
+                for attribute in itemNode["details"]["infix_upgrade"]["attributes"]:
+                    attributes.add(Attribute(typ: attribute["attribute"].str, value: attribute["modifier"].num))
+            var equipment = EquipmentDetail(id: id, name: itemNode["name"].str, attributes: attributes)
+            result.add(id, equipment)
 
 proc parseCharacters(apiToken: string): seq[string] =
     let payload = buildRequest("characters", apiToken=apiToken)
@@ -117,12 +130,17 @@ proc getCharacterDetails(apiToken: string, characterName: string): string =
         if equip.hasKey("skin"):
             let skin = int(equip["skin"].num)
             if skinDetails.hasKey(skin):
-                line &= " $#" % [skinDetails[skin]]
+                line &= " $#" % [skinDetails[skin].name]
         if equipmentDetails.hasKey(id):
             if slot in skinnableSlots:
-                line &= " ($#)" % [equipmentDetails[id]]
+                line &= " ($#)" % [equipmentDetails[id].name]
             else:
-                line &= " $#" % [equipmentDetails[id]]
+                line &= " $#" % [equipmentDetails[id].name]
+            var attrs = newSeq[string]()
+            for attribute in equipmentDetails[id].attributes:
+                attrs.add("$#: $#" % [attribute.typ, $ attribute.value])
+            if attrs.len > 0:
+                line &= " ($#)" % [attrs.join(", ")]
         res.add(line)
     return res.join("\n")
 
