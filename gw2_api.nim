@@ -1,15 +1,24 @@
 # from tables import TableRef, initTable, add, pairs
 import tables
+from algorithm import sorted
 from httpclient import newHttpClient, get
 from cgi import encodeUrl
 from uri import parseUri, `/`, `$`
 from json import items, JsonNode, parseJson, `[]`, `$`, hasKey
-from strutils import join, replace, startsWith, `%`, intToStr
-from sequtils import mapIt
+from strutils import join, replace, startsWith, `%`, intToStr, spaces
+from sequtils import mapIt, toSeq
 
 const apiURL = "https://api.guildwars2.com/v2/"
 
-type RequestFailed = object of Exception
+type
+    RequestFailed = object of Exception
+    ProfessionPlayTime = tuple
+        profession: string
+        playTime: int64
+
+let skinnableSlots = @["Backpack", "Coat", "Boots", "Gloves", "Helm", "HelmAquatic",
+                       "Leggings", "Shoulders", "WeaponA1", "WeaponA2",
+                       "WeaponB1", "WeaponB2", "WeaponAquaticA", "WeaponAquaticB"]
 
 proc buildRequest(endpoint: string, parameters: var Table[string, string], apiToken: string = ""): JsonNode =
     var requestURL = $(parseUri(apiURL) / endpoint)
@@ -43,7 +52,7 @@ proc collectIds(equipment: JsonNode, key: string = "id"): seq[int] =
 proc getItemDetails(equipment: JsonNode, key: string = "id", endpoint: string = "items"): Table[int, string] =
     let ids = collectIds(equipment, key)
     result = initTable[int, string]()
-    let strIds = ids.mapIt(string, $it).join(",")
+    let strIds = ids.mapIt($it).join(",")
     if strIds.len > 0:
         var parameters = {"ids": strIds}.toTable
         let payload = buildRequest(endpoint, parameters)
@@ -52,11 +61,7 @@ proc getItemDetails(equipment: JsonNode, key: string = "id", endpoint: string = 
 
 proc parseCharacters(apiToken: string): seq[string] =
     let payload = buildRequest("characters", apiToken=apiToken)
-    return payload.mapIt(string, it.str)
-
-let skinnableSlots = @["Backpack", "Coat", "Boots", "Gloves", "Helm", "HelmAquatic",
-                       "Leggings", "Shoulders", "WeaponA1", "WeaponA2",
-                       "WeaponB1", "WeaponB2", "WeaponAquaticA", "WeaponAquaticB"]
+    return payload.mapIt(it.str)
 
 proc formatTime(seconds: int64): string =
     result = ""
@@ -69,12 +74,12 @@ proc formatTime(seconds: int64): string =
                                    intToStr((seconds mod 3600) div 60, 2),
                                    intToStr(seconds mod 60, 2)]
 
-proc getCharacterProfession(apiToken: string, characterName: string): (string, int64) =
+proc getCharacterProfession(apiToken: string, characterName: string): ProfessionPlayTime =
     let
         payload = buildRequest($(parseUri("characters") / encodeUrl(characterName).replace("+", "%20")), apiToken=apiToken)
-        age = payload["age"].num
+        playTime = payload["age"].num
         profession = payload["profession"].str
-    return (profession, age)
+    return (profession, playTime)
 
 proc getCharacterDetails(apiToken: string, characterName: string): string =
     let
@@ -121,6 +126,41 @@ proc getCharacterDetails(apiToken: string, characterName: string): string =
         res.add(line)
     return res.join("\n")
 
+proc pad(a, b: string, minWidth: int): int =
+    result = minWidth - a.len - b.len
+    if result < 1:
+        result = 1
+
+proc getPlayTime(apiToken: string, characterNames: seq[string]): string =
+    var
+        playTimeByProfession = initTable[string, int64]()
+        totalPlayTime: int64 = 0
+        res: seq[string] = newSeq[string]()
+
+    for characterName in characterNames:
+        let
+            (profession, playTime) = getCharacterProfession(apiToken, characterName)
+        if playTimeByProfession.hasKey(profession):
+            playTimeByProfession[profession] += playTime
+        else:
+            playTimeByProfession[profession] = playTime
+        totalPlayTime += playTime
+    let
+        title = "Total play-time"
+        formattedPlayTime = formatTime(totalPlayTime)
+        padding = pad(title, formattedPlayTime, 30)
+    res.add("$#:$#$#" % [title, spaces(padding), formattedPlayTime])
+    var sortedByPlayTime = (toSeq(playTimeByProfession.pairs)
+                            .sorted do (x, y: ProfessionPlayTime) -> int:
+                                -cmp(x.playTime, y.playTime))
+    for profession_playtime in sortedByPlayTime:
+        let
+            (profession, playtime) = profession_playtime
+            formattedAge = formatTime(playTime)
+            padding = pad(profession, formattedAge, 30)
+        res.add("$#:$#$#" % [profession, spaces(padding), formattedAge])
+    return res.join("\n")
+
 when isMainModule:
     import os
     var apiToken = ""
@@ -132,20 +172,7 @@ when isMainModule:
                     echo parseCharacters(apiToken)
                 elif paramStr(2) == "--playTime":
                     let characterNames = parseCharacters(apiToken)
-                    var
-                        playTimeByProfession = initTable[string, int64]()
-                        totalPlayTime:int64 = 0
-                    for characterName in characterNames:
-                        let
-                            (profession, age) = getCharacterProfession(apiToken, characterName)
-                        if playTimeByProfession.hasKey(profession):
-                            playTimeByProfession[profession] += age
-                        else:
-                            playTimeByProfession[profession] = age
-                        totalPlayTime += age
-                    echo "Total play-time: $#" % [formatTime(totalPlayTime)]
-                    for profession, age in playTimeByProfession.pairs:
-                        echo "$#: $#" % [profession, formatTime(age)]
+                    echo getPlayTime(apiToken, characterNames)
                 else:
                     let characterName = paramStr(2)
                     echo getCharacterDetails(apiToken, characterName)
