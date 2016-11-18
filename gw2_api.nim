@@ -4,7 +4,7 @@ from algorithm import sorted
 from httpclient import newHttpClient, get
 from cgi import encodeUrl
 from uri import parseUri, `/`, `$`
-from json import items, JsonNode, parseJson, `[]`, `$`, hasKey
+from json import items, JsonNode, parseJson, `[]`, `$`, hasKey, JArray
 from strutils import join, replace, startsWith, `%`, intToStr, spaces
 from sequtils import mapIt, toSeq, concat, deduplicate, distribute
 
@@ -18,7 +18,7 @@ type
     Attribute = object
         typ: string
         value: BiggestInt
-    EquipmentDetail = object
+    LoadoutDetail = object
         id: int
         name: string
         attributes: seq[Attribute]
@@ -50,14 +50,18 @@ proc buildRequest(endpoint: string, apiToken: string = ""): JsonNode =
     var parameters = initTable[string, string]()
     return buildRequest(endpoint, parameters, apiToken)
 
-proc collectIds(equipment: JsonNode, key: string = "id"): seq[int] =
+proc collectIds(character: JsonNode, loadoutKey: string = "equipment", key: string = "id"): seq[int] =
     result = newSeq[int]()
-    for eq in equipment.elems:
-        if eq.hasKey(key):
-            result.add(int(eq[key].num))
+    let loadout = character[loadoutKey]
+    if loadout.kind == JArray:
+        for ld in loadout.elems:
+            if ld.hasKey(key):
+                result.add(int(ld[key].num))
+    else:
+        result.add(int(loadout.num))
 
-proc getItemDetails(ids: seq[int], endpoint: string): Table[int, EquipmentDetail] =
-    result = initTable[int, EquipmentDetail]()
+proc getLoadoutDetails(ids: seq[int], endpoint: string): Table[int, LoadoutDetail] =
+    result = initTable[int, LoadoutDetail]()
     var numSubs = ids.len div 100
     if numSubs == 0:
         numSubs = 1
@@ -72,17 +76,23 @@ proc getItemDetails(ids: seq[int], endpoint: string): Table[int, EquipmentDetail
                 if itemNode.hasKey("details") and itemNode["details"].hasKey("infix_upgrade"):
                     for attribute in itemNode["details"]["infix_upgrade"]["attributes"]:
                         attributes.add(Attribute(typ: attribute["attribute"].str, value: attribute["modifier"].num))
-                var equipment = EquipmentDetail(id: id, name: itemNode["name"].str, attributes: attributes)
-                result.add(id, equipment)
+                var loadout = LoadoutDetail(id: id, name: itemNode["name"].str, attributes: attributes)
+                result.add(id, loadout)
 
-proc collectItemDetails(characters: seq[JsonNode], key: string = "id", endpoint: string = "items"): Table[int, EquipmentDetail] =
+proc collectLoadoutDetails(characters: seq[JsonNode], loadoutKey: string = "equipment", key: string = "id", endpoint: string = "items"): Table[int, LoadoutDetail] =
     var ids = newSeq[int]();
     for character in characters:
-        ids = ids.concat(collectIds(character["equipment"], key))
-    return getItemDetails(deduplicate(ids), endpoint)
+        ids = ids.concat(collectIds(character, loadoutKey, key))
+    return getLoadoutDetails(deduplicate(ids), endpoint)
 
-proc collectSkinDetails(characters: seq[JsonNode]): Table[int, EquipmentDetail] =
-    return collectItemDetails(characters, "skin", "skins")
+proc collectItemDetails(characters: seq[JsonNode]): Table[int, LoadoutDetail] =
+    return collectLoadoutDetails(characters)
+
+proc collectSkinDetails(characters: seq[JsonNode]): Table[int, LoadoutDetail] =
+    return collectLoadoutDetails(characters, "equipment", "skin", "skins")
+
+proc collectTitleDetails(characters: seq[JsonNode]): Table[int, LoadoutDetail] =
+    return collectLoadoutDetails(characters, "title", "id", "titles")
 
 proc formatTime(seconds: int64): string =
     result = ""
@@ -111,7 +121,10 @@ proc getCharacterProfession(payload: JsonNode): ProfessionPlayTime =
         profession = payload["profession"].str
     return (profession, playTime)
 
-proc formatCharacterDetails(character: JsonNode, equipmentDetails: Table[int, EquipmentDetail], skinDetails: Table[int, EquipmentDetail]): string =
+proc formatCharacterDetails(character: JsonNode,
+                            equipmentDetails: Table[int, LoadoutDetail],
+                            skinDetails: Table[int, LoadoutDetail],
+                            titleDetails: Table[int, LoadoutDetail]): string =
     let
         name = character["name"].str
 
@@ -121,15 +134,20 @@ proc formatCharacterDetails(character: JsonNode, equipmentDetails: Table[int, Eq
         gender = character["gender"].str
         race = character["race"].str
         profession = character["profession"].str
+        titleId = int(character["title"].num)
         equipment = character["equipment"]
     var
         avgLifeSpan: int64 = 0
         res: seq[string] = newSeq[string]()
+        title = ""
+
+    if titleDetails.hasKey(titleId):
+        title = titleDetails[titleId].name
 
     if deaths > 0:
         avgLifeSpan = age div deaths
 
-    res.add("$# ($#):" % [name, $ level])
+    res.add("\"$#\" $# ($#):" % [title, name, $ level])
     res.add("    $# $# $#" % [gender, race, profession])
     res.add("    Playtime: $#" % [formatTime(age)])
     res.add("    Deaths: $#" % [$ deaths])
@@ -213,14 +231,16 @@ when isMainModule:
                     let
                         itemDetails = collectItemDetails(characters)
                         skinDetails = collectSkinDetails(characters)
-                    echo formatCharacterDetails(character, itemDetails, skinDetails)
+                        titleDetails = collectTitleDetails(characters)
+                    echo formatCharacterDetails(character, itemDetails, skinDetails, titleDetails)
             else:
                 let
                     characters = getAllCharacters(apiToken)
                     itemDetails = collectItemDetails(characters)
                     skinDetails = collectSkinDetails(characters)
+                    titleDetails = collectTitleDetails(characters)
                 for character in characters:
-                    echo formatCharacterDetails(character, itemDetails, skinDetails)
+                    echo formatCharacterDetails(character, itemDetails, skinDetails, titleDetails)
         except RequestFailed:
             echo "Request Failed:"
             echo getCurrentExceptionMsg()
