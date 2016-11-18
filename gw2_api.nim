@@ -6,7 +6,7 @@ from cgi import encodeUrl
 from uri import parseUri, `/`, `$`
 from json import items, JsonNode, parseJson, `[]`, `$`, hasKey
 from strutils import join, replace, startsWith, `%`, intToStr, spaces
-from sequtils import mapIt, toSeq
+from sequtils import mapIt, toSeq, concat, deduplicate, distribute
 
 const apiURL = "https://api.guildwars2.com/v2/"
 
@@ -56,21 +56,33 @@ proc collectIds(equipment: JsonNode, key: string = "id"): seq[int] =
         if eq.hasKey(key):
             result.add(int(eq[key].num))
 
-proc getItemDetails(equipment: JsonNode, key: string = "id", endpoint: string = "items"): Table[int, EquipmentDetail] =
-    let ids = collectIds(equipment, key)
+proc getItemDetails(ids: seq[int], endpoint: string): Table[int, EquipmentDetail] =
     result = initTable[int, EquipmentDetail]()
-    let strIds = ids.mapIt($it).join(",")
-    if strIds.len > 0:
-        var parameters = {"ids": strIds}.toTable
-        let payload = buildRequest(endpoint, parameters)
-        for itemNode in payload.elems:
-            let id = int(itemNode["id"].num)
-            var attributes = newSeq[Attribute]()
-            if itemNode.hasKey("details") and itemNode["details"].hasKey("infix_upgrade"):
-                for attribute in itemNode["details"]["infix_upgrade"]["attributes"]:
-                    attributes.add(Attribute(typ: attribute["attribute"].str, value: attribute["modifier"].num))
-            var equipment = EquipmentDetail(id: id, name: itemNode["name"].str, attributes: attributes)
-            result.add(id, equipment)
+    var numSubs = ids.len div 100
+    if numSubs == 0:
+        numSubs = 1
+    for subIds in distribute(ids, numSubs):
+        let strIds = subIds.mapIt($it).join(",")
+        if strIds.len > 0:
+            var parameters = {"ids": strIds}.toTable
+            let payload = buildRequest(endpoint, parameters)
+            for itemNode in payload.elems:
+                let id = int(itemNode["id"].num)
+                var attributes = newSeq[Attribute]()
+                if itemNode.hasKey("details") and itemNode["details"].hasKey("infix_upgrade"):
+                    for attribute in itemNode["details"]["infix_upgrade"]["attributes"]:
+                        attributes.add(Attribute(typ: attribute["attribute"].str, value: attribute["modifier"].num))
+                var equipment = EquipmentDetail(id: id, name: itemNode["name"].str, attributes: attributes)
+                result.add(id, equipment)
+
+proc collectItemDetails(characters: seq[JsonNode], key: string = "id", endpoint: string = "items"): Table[int, EquipmentDetail] =
+    var ids = newSeq[int]();
+    for character in characters:
+        ids = ids.concat(collectIds(character["equipment"], key))
+    return getItemDetails(deduplicate(ids), endpoint)
+
+proc collectSkinDetails(characters: seq[JsonNode]): Table[int, EquipmentDetail] =
+    return collectItemDetails(characters, "skin", "skins")
 
 proc formatTime(seconds: int64): string =
     result = ""
@@ -83,9 +95,9 @@ proc formatTime(seconds: int64): string =
                                    intToStr((seconds mod 3600) div 60, 2),
                                    intToStr(seconds mod 60, 2)]
 
-proc getAllCharacters(apiToken: string): JsonNode =
+proc getAllCharacters(apiToken: string): seq[JsonNode] =
     var parameters = {"page": "0"}.toTable
-    return buildRequest("characters", parameters, apiToken=apiToken)
+    return buildRequest("characters", parameters, apiToken=apiToken).elems
 
 proc getCharacterNames(apiToken: string): seq[string] =
     return getAllCharacters(apiToken).mapIt($it["name"])
@@ -99,7 +111,7 @@ proc getCharacterProfession(payload: JsonNode): ProfessionPlayTime =
         profession = payload["profession"].str
     return (profession, playTime)
 
-proc getCharacterDetails(character: JsonNode): string =
+proc formatCharacterDetails(character: JsonNode, equipmentDetails: Table[int, EquipmentDetail], skinDetails: Table[int, EquipmentDetail]): string =
     let
         name = character["name"].str
 
@@ -110,8 +122,6 @@ proc getCharacterDetails(character: JsonNode): string =
         race = character["race"].str
         profession = character["profession"].str
         equipment = character["equipment"]
-        equipmentDetails = getItemDetails(equipment)
-        skinDetails = getItemDetails(equipment, "skin", "skins")
     var
         avgLifeSpan: int64 = 0
         res: seq[string] = newSeq[string]()
@@ -153,13 +163,13 @@ proc pad(a, b: string, minWidth: int): int =
     if result < 1:
         result = 1
 
-proc getPlayTime(allCharacters: JsonNode): string =
+proc getPlayTime(allCharacters: seq[JsonNode]): string =
     var
         playTimeByProfession = initTable[string, int64]()
         totalPlayTime: int64 = 0
         res: seq[string] = newSeq[string]()
 
-    for character in allCharacters.elems:
+    for character in allCharacters:
         let
             (profession, playTime) = getCharacterProfession(character)
         if playTimeByProfession.hasKey(profession):
@@ -195,11 +205,22 @@ when isMainModule:
                 elif paramStr(2) == "--playTime":
                     echo getPlayTime(getAllCharacters(apiToken))
                 else:
-                    let characterName = paramStr(2)
-                    echo getCharacterDetails(getCharacter(apiToken, characterName))
+                    let
+                        characterName = paramStr(2)
+                        character = getCharacter(apiToken, characterName)
+                    var characters = newSeq[JsonNode]()
+                    characters.add(character)
+                    let
+                        itemDetails = collectItemDetails(characters)
+                        skinDetails = collectSkinDetails(characters)
+                    echo formatCharacterDetails(character, itemDetails, skinDetails)
             else:
-                for character in getAllCharacters(apiToken).elems:
-                    echo getCharacterDetails(character)
+                let
+                    characters = getAllCharacters(apiToken)
+                    itemDetails = collectItemDetails(characters)
+                    skinDetails = collectSkinDetails(characters)
+                for character in characters:
+                    echo formatCharacterDetails(character, itemDetails, skinDetails)
         except RequestFailed:
             echo "Request Failed:"
             echo getCurrentExceptionMsg()
