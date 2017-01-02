@@ -4,7 +4,7 @@ from algorithm import sorted
 from httpclient import newHttpClient, get
 from cgi import encodeUrl
 from uri import parseUri, `/`, `$`
-from json import items, JsonNode, parseJson, `[]`, `$`, hasKey, JArray
+from json import items, JsonNode, parseJson, `[]`, `{}`, `$`, hasKey, JArray
 from strutils import join, replace, startsWith, `%`, intToStr, spaces
 from sequtils import mapIt, toSeq, concat, deduplicate, distribute
 
@@ -51,14 +51,18 @@ proc buildRequest(endpoint: string, apiToken: string = ""): JsonNode =
     return buildRequest(endpoint, parameters, apiToken)
 
 proc collectIds(character: JsonNode, loadoutKey: string = "equipment", key: string = "id"): seq[int] =
-    result = newSeq[int]()
-    let loadout = character[loadoutKey]
-    if loadout.kind == JArray:
-        for ld in loadout.elems:
-            if ld.hasKey(key):
-                result.add(int(ld[key].num))
-    else:
-        result.add(int(loadout.num))
+    var ids = newSeq[int]()
+    try:
+        let loadout = character[loadoutKey]
+        if loadout.kind == JArray:
+            for ld in loadout.elems:
+                if ld.hasKey(key):
+                    ids.add(int(ld[key].num))
+        else:
+            ids.add(int(loadout.num))
+    except KeyError:
+        discard
+    return ids
 
 proc getLoadoutDetails(ids: seq[int], endpoint: string): Table[int, LoadoutDetail] =
     result = initTable[int, LoadoutDetail]()
@@ -134,20 +138,25 @@ proc formatCharacterDetails(character: JsonNode,
         gender = character["gender"].str
         race = character["race"].str
         profession = character["profession"].str
-        titleId = int(character["title"].num)
         equipment = character["equipment"]
+        titleKey = character{"title"}
     var
         avgLifeSpan: int64 = 0
         res: seq[string] = newSeq[string]()
         title = ""
-
-    if titleDetails.hasKey(titleId):
-        title = titleDetails[titleId].name
+        titleId = 0
 
     if deaths > 0:
         avgLifeSpan = age div deaths
 
-    res.add("\"$#\" $# ($#):" % [title, name, $ level])
+    if not titleKey.isNil:
+        titleId = int(titleKey.num)
+    if titleDetails.hasKey(titleId):
+        title = titleDetails[titleId].name
+        res.add("\"$#\" $# ($#):" % [title, name, $ level])
+    else:
+        res.add("$# ($#):" % [name, $ level])
+
     res.add("    $# $# $#" % [gender, race, profession])
     res.add("    Playtime: $#" % [formatTime(age)])
     res.add("    Deaths: $#" % [$ deaths])
