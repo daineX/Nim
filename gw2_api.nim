@@ -4,8 +4,8 @@ from algorithm import sorted
 from httpclient import newHttpClient, get
 from cgi import encodeUrl
 from uri import parseUri, `/`, `$`
-from json import items, JsonNode, parseJson, `[]`, `{}`, `$`, hasKey, JArray
-from strutils import join, replace, startsWith, `%`, intToStr, spaces
+from json import items, JsonNode, parseJson, `[]`, `{}`, `$`, hasKey, JArray, copy
+from strutils import join, replace, startsWith, `%`, intToStr, spaces, split
 from sequtils import mapIt, toSeq, concat, deduplicate, distribute
 
 const apiURL = "https://api.guildwars2.com/v2/"
@@ -52,8 +52,11 @@ proc buildRequest(endpoint: string, apiToken: string = ""): JsonNode =
 
 proc collectIds(character: JsonNode, loadoutKey: string = "equipment", key: string = "id"): seq[int] =
     var ids = newSeq[int]()
+    let loadoutkeys = loadoutKey.split(".")
     try:
-        let loadout = character[loadoutKey]
+        var loadout = character.copy()
+        for loadoutKeyPart in loadoutkeys:
+            loadout = loadout[loadoutKeyPart]
         if loadout.kind == JArray:
             for ld in loadout.elems:
                 if ld.hasKey(key):
@@ -98,6 +101,20 @@ proc collectSkinDetails(characters: seq[JsonNode]): Table[int, LoadoutDetail] =
 proc collectTitleDetails(characters: seq[JsonNode]): Table[int, LoadoutDetail] =
     return collectLoadoutDetails(characters, "title", "id", "titles")
 
+proc collectSpecializationDetails(characters: seq[JsonNode]): Table[int, LoadoutDetail] =
+    return collectLoadoutDetails(characters, "specializations.wvw", "id", "specializations")
+
+proc collectTraitDetails(characters: seq[JsonNode]): Table[int, LoadoutDetail] =
+    let endpoint = "traits"
+    var ids = newSeq[int]()
+    for character in characters:
+        var wvw = character["specializations"]["wvw"]
+        for spec in character["specializations"]["wvw"]:
+            for trait in spec["traits"]:
+                ids.add(int(trait.num))
+    return getLoadoutDetails(deduplicate(ids), endpoint)
+# Traits: {"specializations": {"wvw": [{"id": 13, "traits": [123, 13]}]}
+
 proc formatTime(seconds: int64): string =
     result = ""
     if seconds < 60:
@@ -128,7 +145,9 @@ proc getCharacterProfession(payload: JsonNode): ProfessionPlayTime =
 proc formatCharacterDetails(character: JsonNode,
                             equipmentDetails: Table[int, LoadoutDetail],
                             skinDetails: Table[int, LoadoutDetail],
-                            titleDetails: Table[int, LoadoutDetail]): string =
+                            titleDetails: Table[int, LoadoutDetail],
+                            specDetails: Table[int, LoadoutDetail],
+                            traitDetails: Table[int, LoadoutDetail]): string =
     let
         name = character["name"].str
 
@@ -140,6 +159,7 @@ proc formatCharacterDetails(character: JsonNode,
         profession = character["profession"].str
         equipment = character["equipment"]
         titleKey = character{"title"}
+        specializations = character["specializations"]["wvw"]
     var
         avgLifeSpan: int64 = 0
         res: seq[string] = newSeq[string]()
@@ -183,6 +203,17 @@ proc formatCharacterDetails(character: JsonNode,
             if attrs.len > 0:
                 line &= " ($#)" % [attrs.join(", ")]
         res.add(line)
+    res.add("    Specializations:")
+    for spec in specializations:
+        let id = int(spec["id"].num)
+        if specDetails.hasKey(id):
+            res.add("        $#" % [specDetails[id].name])
+        for trait in spec["traits"]:
+            let trait_id = int(trait.num)
+            if traitDetails.hasKey(trait_id):
+                res.add("             $#" % [traitDetails[trait_id].name])
+            else:
+                res.add("             $#" % [$ trait.num])
     return res.join("\n")
 
 proc pad(a, b: string, minWidth: int): int =
@@ -241,15 +272,19 @@ when isMainModule:
                         itemDetails = collectItemDetails(characters)
                         skinDetails = collectSkinDetails(characters)
                         titleDetails = collectTitleDetails(characters)
-                    echo formatCharacterDetails(character, itemDetails, skinDetails, titleDetails)
+                        specDetails = collectSpecializationDetails(characters)
+                        traitDetails = collectTraitDetails(characters)
+                    echo formatCharacterDetails(character, itemDetails, skinDetails, titleDetails, specDetails, traitDetails)
             else:
                 let
                     characters = getAllCharacters(apiToken)
                     itemDetails = collectItemDetails(characters)
                     skinDetails = collectSkinDetails(characters)
                     titleDetails = collectTitleDetails(characters)
+                    specDetails = collectSpecializationDetails(characters)
+                    traitDetails = collectTraitDetails(characters)
                 for character in characters:
-                    echo formatCharacterDetails(character, itemDetails, skinDetails, titleDetails)
+                    echo formatCharacterDetails(character, itemDetails, skinDetails, titleDetails, specDetails, traitDetails)
         except RequestFailed:
             echo "Request Failed:"
             echo getCurrentExceptionMsg()
