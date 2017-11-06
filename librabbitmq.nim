@@ -106,20 +106,25 @@ type
         message*: Message
     ConsumeOK = object
         consumer_tag*: ptr Bytes
-    Boolean = cuchar
+    Boolean* = cuchar
     QueueDeclareOK = object
         queue: Bytes
         message_count: cuint
         consumer_count: cuint
     ExchangeDeclareOk = object
         dummy: char
+    BasicQoSOK = object
+        dummy: char
     BasicMessage* = object
-        content: string
-        delivery_tag: culong
+        content*: string
+        delivery_tag*: culong
+        channel*: Channel
+        routing_key*: string
+        consumer_tag*: string
 
 const
-    empty_bytes = Bytes(len: 0, bytes: nil)
-    empty_table = Table(num_entries: 0, entries: nil)
+    empty_bytes* = Bytes(len: 0, bytes: nil)
+    empty_table* = Table(num_entries: 0, entries: nil)
     AMQP_BASIC_CONTENT_TYPE_FLAG = (1 shl 15)
     AMQP_BASIC_CONTENT_ENCODING_FLAG = (1 shl 14)
     AMQP_BASIC_HEADERS_FLAG = (1 shl 13)
@@ -134,7 +139,7 @@ const
     AMQP_BASIC_USER_ID_FLAG= (1 shl 4)
     AMQP_BASIC_APP_ID_FLAG= (1 shl 3)
     AMQP_BASIC_CLUSTER_ID_FLAG= (1 shl 2)
-    MAX_CHANNELS = 32768
+    MAX_CHANNELS* = 32768
 
 proc new_connection*: PConnectionState {.cdecl, importc: "amqp_new_connection", dynlib: rmqdll.}
 proc destroy_connection*(conn: PConnectionState) {.cdecl, importc: "amqp_destroy_connection", dynlib: rmqdll.}
@@ -161,12 +166,17 @@ proc basic_ack*(conn: PConnectionState, channel: Channel, delivery_tag: culong, 
 
 proc exchange_declare*(conn: PConnectionState, channel: Channel, exchange: Bytes, type_type: Bytes, passive: Boolean, durable: Boolean, auto_delete: Boolean, internal: Boolean, arguments: Table): ExchangeDeclareOk {.cdecl, importc: "amqp_exchange_declare", dynlib: rmqdll.}
 
+proc basic_qos*(conn: PConnectionState, channel: Channel, prefetch_size: cuint = 0, prefetch_count: cushort = 0, global_global: Boolean = Boolean(false)): BasicQoSOK {.cdecl, importc: "amqp_basic_qos", dynlib: rmqdll.}
 
-proc `$`*(b: Bytes): string =
+
+proc bytes_string*(b: Bytes): string =
     if b.len > 0:
         return ($ b.bytes)[0..b.len - 1]
     else:
         return ""
+
+proc `$`(b: Bytes): string =
+    return bytes_string(b)
 
 proc check_reply*(reply: RPCReply) =
     if reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_LIBRARY_EXCEPTION:
@@ -181,11 +191,11 @@ proc connect*(host: cstring, port: cint, vhost: cstring, user: cstring, password
     var socket = tcp_socket_new(conn)
     assert socket_open(socket, host, port) == 0
     check_reply(login(conn, vhost, 0, 131072, 0, SASL_METHOD_ENUM.AMQP_SASL_METHOD_PLAIN, user, password))
-    discard channel_open(conn, 1)
-    check(conn)
     return conn
 
 proc setup_queue*(conn: PConnectionState, channel: Channel, queuename: string, no_local: bool = false, no_ack: bool = false, exclusive: bool = false, passive: bool = false, durable: bool = true, auto_delete: bool = false) =
+    discard channel_open(conn, cushort(channel))
+    check(conn)
     discard queue_declare(conn, cushort(channel), cstring_bytes(queuename), cuchar(passive), cuchar(durable), cuchar(exclusive), cuchar(auto_delete), empty_table)
     discard basic_consume(conn, cushort(channel), cstring_bytes(queuename), empty_bytes, cuchar(no_local), cuchar(no_ack), cuchar(exclusive), empty_table)
     check(conn)
@@ -194,7 +204,11 @@ proc get_message*(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cin
     var envelope: Envelope
     maybe_release_buffers(conn)
     check_reply(consume_message(conn, addr envelope, timeout, flags))
-    var msg = BasicMessage(content: $ envelope.message.body, delivery_tag: envelope.delivery_tag)
+    var msg = BasicMessage(content: $ envelope.message.body,
+                           delivery_tag: envelope.delivery_tag,
+                           channel: envelope.channel,
+                           routing_key: $ envelope.routing_key,
+                           consumer_tag: $ envelope.consumer_tag)
     destroy_envelope(addr envelope)
     return msg
 
