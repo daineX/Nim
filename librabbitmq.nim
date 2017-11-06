@@ -136,47 +136,47 @@ const
     AMQP_BASIC_CLUSTER_ID_FLAG= (1 shl 2)
     MAX_CHANNELS = 32768
 
-proc new_connection: PConnectionState {.cdecl, importc: "amqp_new_connection", dynlib: rmqdll.}
-proc destroy_connection(conn: PConnectionState) {.cdecl, importc: "amqp_destroy_connection", dynlib: rmqdll.}
-proc tcp_socket_new(state: PConnectionState): PSocket {.cdecl, importc: "amqp_tcp_socket_new", dynlib: rmqdll.}
-proc socket_open(self: PSocket, host: cstring, port: cint): int {.cdecl, importc: "amqp_socket_open", dynlib: rmqdll.}
-proc login(state: PConnectionState, vhost: cstring, channel_max: cint, frame_max: cint, heartbeat: cint, sasl_method: SASL_METHOD_ENUM): RPCReply {.cdecl, importc: "amqp_login", dynlib: rmqdll, varargs.}
-proc error_string2(err: int): cstring {.cdecl, importc: "amqp_error_string2", dynlib: rmqdll.}
-proc channel_open(conn: PConnectionState, channel: Channel): int {.cdecl, importc: "amqp_channel_open", dynlib: rmqdll.}
-proc get_rpc_reply(conn: PConnectionState): RPCReply {.cdecl, importc: "amqp_get_rpc_reply", dynlib: rmqdll.}
-proc basic_consume(conn: PConnectionState, channel: Channel, queue: Bytes, consumer_tag: Bytes, no_local: Boolean, no_ack: Boolean, exclusive: Boolean, arguments: Table): ConsumeOK {.cdecl, importc: "amqp_basic_consume", dynlib: rmqdll.}
-proc cstring_bytes(cstr: cstring): Bytes {.cdecl, importc: "amqp_cstring_bytes", dynlib: rmqdll.}
-proc queue_declare(conn: PConnectionState, channel: Channel, queue: Bytes, passive: Boolean, durable: Boolean, exclusive: Boolean, auto_delete: Boolean, arguments: Table): ptr QueueDeclareOK {.cdecl, importc: "amqp_queue_declare", dynlib: rmqdll.}
-proc queue_bind(conn: PConnectionState, channel: Channel, queue: Bytes, exchange: Bytes, bindingKey: Bytes, arguments: Table) {.cdecl, importc: "amqp_queue_bind", dynlib: rmqdll.}
+proc new_connection*: PConnectionState {.cdecl, importc: "amqp_new_connection", dynlib: rmqdll.}
+proc destroy_connection*(conn: PConnectionState) {.cdecl, importc: "amqp_destroy_connection", dynlib: rmqdll.}
+proc tcp_socket_new*(state: PConnectionState): PSocket {.cdecl, importc: "amqp_tcp_socket_new", dynlib: rmqdll.}
+proc socket_open*(self: PSocket, host: cstring, port: cint): int {.cdecl, importc: "amqp_socket_open", dynlib: rmqdll.}
+proc login*(state: PConnectionState, vhost: cstring, channel_max: cint, frame_max: cint, heartbeat: cint, sasl_method: SASL_METHOD_ENUM): RPCReply {.cdecl, importc: "amqp_login", dynlib: rmqdll, varargs.}
+proc error_string2*(err: int): cstring {.cdecl, importc: "amqp_error_string2", dynlib: rmqdll.}
+proc channel_open*(conn: PConnectionState, channel: Channel): int {.cdecl, importc: "amqp_channel_open", dynlib: rmqdll.}
+proc get_rpc_reply*(conn: PConnectionState): RPCReply {.cdecl, importc: "amqp_get_rpc_reply", dynlib: rmqdll.}
+proc basic_consume*(conn: PConnectionState, channel: Channel, queue: Bytes, consumer_tag: Bytes, no_local: Boolean, no_ack: Boolean, exclusive: Boolean, arguments: Table): ConsumeOK {.cdecl, importc: "amqp_basic_consume", dynlib: rmqdll.}
+proc cstring_bytes*(cstr: cstring): Bytes {.cdecl, importc: "amqp_cstring_bytes", dynlib: rmqdll.}
+proc queue_declare*(conn: PConnectionState, channel: Channel, queue: Bytes, passive: Boolean, durable: Boolean, exclusive: Boolean, auto_delete: Boolean, arguments: Table): ptr QueueDeclareOK {.cdecl, importc: "amqp_queue_declare", dynlib: rmqdll.}
+proc queue_bind*(conn: PConnectionState, channel: Channel, queue: Bytes, exchange: Bytes, bindingKey: Bytes, arguments: Table) {.cdecl, importc: "amqp_queue_bind", dynlib: rmqdll.}
 proc consume_message(conn: PConnectionState, envelope: ptr Envelope, timeout: ptr Timeval, flags: cint): RPCReply {.cdecl, importc: "amqp_consume_message", dynlib: rmqdll.}
-proc maybe_release_buffers(conn: PConnectionState) {.cdecl, importc: "amqp_maybe_release_buffers", dynlib: rmqdll.}
-proc read_message(conn: PConnectionState, channel: Channel, message: ptr Message, n: cuint): RPCReply {.cdecl, importc: "amqp_read_message", dynlib: rmqdll.}
-proc destroy_envelope(envelope: ptr Envelope) {.cdecl, importc: "amqp_destroy_envelope", dynlib: rmqdll.}
+proc maybe_release_buffers*(conn: PConnectionState) {.cdecl, importc: "amqp_maybe_release_buffers", dynlib: rmqdll.}
+proc read_message*(conn: PConnectionState, channel: Channel, message: ptr Message, n: cuint): RPCReply {.cdecl, importc: "amqp_read_message", dynlib: rmqdll.}
+proc destroy_envelope*(envelope: ptr Envelope) {.cdecl, importc: "amqp_destroy_envelope", dynlib: rmqdll.}
 
-proc bytes_malloc_dup(b: Bytes): Bytes {.cdecl, importc: "amqp_bytes_malloc_dup", dynlib: rmqdll.}
+proc bytes_malloc_dup*(b: Bytes): Bytes {.cdecl, importc: "amqp_bytes_malloc_dup", dynlib: rmqdll.}
 
-proc simple_wait_frame_noblock(conn: PConnectionState, frame: ptr Frame, timeout: ptr Timeval): cint {.cdecl, importc: "amqp_simple_wait_frame_noblock", dynlib: rmqdll.}
+proc simple_wait_frame_noblock*(conn: PConnectionState, frame: ptr Frame, timeout: ptr Timeval): cint {.cdecl, importc: "amqp_simple_wait_frame_noblock", dynlib: rmqdll.}
 
-proc basic_ack(conn: PConnectionState, channel: Channel, delivery_tag: culong, multiple: Boolean): cint {.cdecl, importc: "amqp_basic_ack", dynlib: rmqdll.}
+proc basic_ack*(conn: PConnectionState, channel: Channel, delivery_tag: culong, multiple: Boolean): cint {.cdecl, importc: "amqp_basic_ack", dynlib: rmqdll.}
 
-proc exchange_declare(conn: PConnectionState, channel: Channel, exchange: Bytes, type_type: Bytes, passive: Boolean, durable: Boolean, auto_delete: Boolean, internal: Boolean, arguments: Table): ExchangeDeclareOk {.cdecl, importc: "amqp_exchange_declare", dynlib: rmqdll.}
+proc exchange_declare*(conn: PConnectionState, channel: Channel, exchange: Bytes, type_type: Bytes, passive: Boolean, durable: Boolean, auto_delete: Boolean, internal: Boolean, arguments: Table): ExchangeDeclareOk {.cdecl, importc: "amqp_exchange_declare", dynlib: rmqdll.}
 
 
-proc `$`(b: Bytes): string =
+proc `$`*(b: Bytes): string =
     if b.len > 0:
         return ($ b.bytes)[0..b.len - 1]
     else:
         return ""
 
-proc check_reply(reply: RPCReply) =
+proc check_reply*(reply: RPCReply) =
     if reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_LIBRARY_EXCEPTION:
         echo error_string2(reply.library_error)
     assert(reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL, msg=($ reply.reply_type))
 
-proc check(conn: PConnectionState) =
+proc check*(conn: PConnectionState) =
     check_reply(get_rpc_reply(conn))
 
-proc connect(host: cstring, port: cint, vhost: cstring, user: cstring, password: cstring): PConnectionState =
+proc connect*(host: cstring, port: cint, vhost: cstring, user: cstring, password: cstring): PConnectionState =
     var conn = new_connection()
     var socket = tcp_socket_new(conn)
     assert socket_open(socket, host, port) == 0
@@ -185,12 +185,12 @@ proc connect(host: cstring, port: cint, vhost: cstring, user: cstring, password:
     check(conn)
     return conn
 
-proc setup_queue(conn: PConnectionState, channel: Channel, queuename: string, no_local: bool = false, no_ack: bool = false, exclusive: bool = false, passive: bool = false, durable: bool = true, auto_delete: bool = false) =
+proc setup_queue*(conn: PConnectionState, channel: Channel, queuename: string, no_local: bool = false, no_ack: bool = false, exclusive: bool = false, passive: bool = false, durable: bool = true, auto_delete: bool = false) =
     discard queue_declare(conn, cushort(channel), cstring_bytes(queuename), cuchar(passive), cuchar(durable), cuchar(exclusive), cuchar(auto_delete), empty_table)
     discard basic_consume(conn, cushort(channel), cstring_bytes(queuename), empty_bytes, cuchar(no_local), cuchar(no_ack), cuchar(exclusive), empty_table)
     check(conn)
 
-proc get_message(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cint = 0): BasicMessage =
+proc get_message*(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cint = 0): BasicMessage =
     var envelope: Envelope
     maybe_release_buffers(conn)
     check_reply(consume_message(conn, addr envelope, timeout, flags))
@@ -198,11 +198,9 @@ proc get_message(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cint
     destroy_envelope(addr envelope)
     return msg
 
-proc ack_message(conn: PConnectionState, channel: Channel, msg: BasicMessage) =
+proc ack_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage) =
     let ok = basic_ack(conn, channel, msg.delivery_tag, cuchar(0))
     assert ok == 0
-
-#proc declare_topic_exchange(conn: PConnectionState,
 
 when isMainModule:
     var
