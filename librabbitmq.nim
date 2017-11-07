@@ -164,6 +164,8 @@ proc simple_wait_frame_noblock*(conn: PConnectionState, frame: ptr Frame, timeou
 
 proc basic_ack*(conn: PConnectionState, channel: Channel, delivery_tag: culong, multiple: Boolean): cint {.cdecl, importc: "amqp_basic_ack", dynlib: rmqdll.}
 
+proc basic_reject*(conn: PConnectionState, channel: Channel, delivery_tag: culong, multiple: Boolean, requeue: Boolean): cint {.cdecl, importc: "amqp_basic_ack", dynlib: rmqdll.}
+
 proc exchange_declare*(conn: PConnectionState, channel: Channel, exchange: Bytes, type_type: Bytes, passive: Boolean, durable: Boolean, auto_delete: Boolean, internal: Boolean, arguments: Table): ExchangeDeclareOk {.cdecl, importc: "amqp_exchange_declare", dynlib: rmqdll.}
 
 proc basic_qos*(conn: PConnectionState, channel: Channel, prefetch_size: cuint = 0, prefetch_count: cushort = 0, global_global: Boolean = Boolean(false)): BasicQoSOK {.cdecl, importc: "amqp_basic_qos", dynlib: rmqdll.}
@@ -214,6 +216,10 @@ proc get_message*(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cin
 
 proc ack_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage) =
     let ok = basic_ack(conn, channel, msg.delivery_tag, cuchar(0))
+    assert ok == 0
+
+proc reject_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage) =
+    let ok = basic_reject(conn, channel, msg.delivery_tag, cuchar(0), cuchar(0))
     assert ok == 0
 
 when isMainModule:
