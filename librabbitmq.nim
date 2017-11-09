@@ -134,10 +134,10 @@ type
     ConsumeOK = object
         consumer_tag*: ptr Bytes
     Boolean* = cuchar
-    QueueDeclareOK = object
-        queue: Bytes
-        message_count: cuint
-        consumer_count: cuint
+    QueueDeclareOK* = object
+        queue*: Bytes
+        message_count*: cuint
+        consumer_count*: cuint
     ExchangeDeclareOk = object
         dummy: char
     BasicQoSOK = object

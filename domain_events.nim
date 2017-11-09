@@ -1,7 +1,7 @@
 from json import JsonNode, parseJson, `{}`, `[]`, getNum, getStr, getFNum, JsonParsingError
 import tables
 from sequtils import insert, concat, deduplicate
-from librabbitmq import exchange_declare, queue_declare, queue_bind, Channel, PConnectionState, connect, MAX_CHANNELS, cstring_bytes, empty_arguments, Boolean, basic_qos, empty_bytes, basic_consume, get_message, ack_message, check, channel_open, bytes_string, reject_message, Arguments, makeArguments
+from librabbitmq import exchange_declare, queue_declare, queue_bind, Channel, PConnectionState, connect, MAX_CHANNELS, cstring_bytes, empty_arguments, Boolean, basic_qos, empty_bytes, basic_consume, get_message, ack_message, check, channel_open, bytes_string, reject_message, Arguments, makeArguments, QueueDeclareOK
 
 
 type
@@ -17,6 +17,7 @@ type
         current_channel: Channel
         conn: PConnectionState
         exchange: cstring
+        exchange_type: cstring
         handlers: Table[string, consume_callback]
 const
     FALSE* = Boolean(false)
@@ -49,8 +50,17 @@ proc newTransport*(host: cstring, port: cint, vhost: cstring, user: cstring, pas
     return Transport(conn: conn,
                      current_channel: channel,
                      exchange: exchange,
+                     exchange_type: exchange_type,
                      handlers: initTable[string, consume_callback]())
 
+
+proc exchange_declare*(transport: Transport, exchange: string, exchange_type: cstring = "topic", passive: bool = false, durable: bool = true, auto_delete: bool = false, internal: bool = false, arguments: Arguments = empty_arguments) =
+    discard exchange_declare(transport.conn, transport.channel, cstring_bytes(exchange), cstring_bytes(exchange_type), Boolean(passive), Boolean(durable), Boolean(auto_delete), Boolean(internal), arguments)
+
+proc queue_declare*(transport: Transport, queue_name: string, passive: bool = false, durable: bool = true, exclusive: bool = false, auto_delete: bool = false, arguments: Arguments = empty_arguments): string =
+    var res: ptr QueueDeclareOK
+    res = queue_declare(transport.conn, transport.channel, cstring_bytes(queue_name), Boolean(passive), Boolean(durable), Boolean(exclusive), Boolean(auto_delete), arguments)
+    return bytes_string(res[].queue)
 
 proc newDomainEvent*(data: JsonNode, routing_key: string = "", domain_object_id: int = 0, uuid_string: string = "", timestamp: float = 0.0, retries: uint = 0): DomainEvent =
     return DomainEvent(routing_key: routing_key,
@@ -78,7 +88,7 @@ proc newDomainEventFromJson*(json_msg: string): DomainEvent =
                           retries=retries)
 
 
-proc bind_routing_keys(transport: Transport, queue_name: cstring, binding_keys: seq[string], handler: consume_callback) =
+proc bind_routing_keys(transport: Transport, queue_name: cstring, binding_keys: seq[string]) =
     for binding_key in binding_keys:
         queue_bind(transport.conn, transport.channel, cstring_bytes(queue_name), cstring_bytes(transport.exchange), cstring_bytes(binding_key), empty_arguments)
         transport.check
@@ -91,12 +101,16 @@ proc register*(transport: Transport, handler: consume_callback, name: string, bi
         dead_letter_exchange = name & "-dlx"
     var arguments: Arguments
     if dead_letter:
+        var dead_letter_queue = transport.queue_declare(name & "-dlx")
+        transport.exchange_declare(dead_letter_exchange, exchange_type=transport.exchange_type)
+        transport.bind_routing_keys(dead_letter_queue, binding_keys)
         arguments = makeArguments({"x-dead-letter-exchange": dead_letter_exchange}.toTable)
     else:
         arguments = empty_arguments
-    discard queue_declare(transport.conn, channel, cstring_bytes(name), FALSE, Boolean(durable), Boolean(exclusive), Boolean(auto_delete), arguments)
+    discard transport.queue_declare(name, durable=durable, exclusive=exclusive, auto_delete=auto_delete, arguments=arguments)
     transport.check
-    transport.bind_routing_keys(name, binding_keys, handler)
+    transport.bind_routing_keys(name, binding_keys)
+
     discard basic_qos(transport.conn, channel, prefetch_count=1)
     transport.check
     discard basic_consume(transport.conn, channel, cstring_bytes(name), cstring_bytes(name), FALSE, FALSE, FALSE, empty_arguments)
