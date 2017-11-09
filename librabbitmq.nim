@@ -9,8 +9,34 @@ else:
     rmqdll* = "librabbitmq.so.4"
 
 from posix import Timeval
+from tables import Table, pairs, len
 
 type
+    Decimal* = object
+        decimals*: cuchar
+        value*: cuint
+    FieldValueValue* {.union.} = object
+        boolean*: Boolean
+        i8*: cchar
+        u8*: cuchar
+        i16*: cshort
+        u16*: cushort
+        i32*: cint
+        u32*: cuint
+        i64*: clong
+        u64*: culong
+        f32*: cfloat
+        f64*: cdouble
+        decimal*: Decimal
+        bytes*: Bytes
+        table*: Arguments
+        array_array*: Array
+    FieldValue* {.final, pure.} = object
+        kind*: cuchar
+        value*: FieldValueValue
+    Array* = object
+        num_entries*: cint
+        entries: ptr FieldValue
     Bytes* = object
         len*: csize
         bytes*: ptr cchar
@@ -58,12 +84,13 @@ type
         reply_type*: ResponseTypeEnum
         reply*: Method
         library_error: cint
-    Table* {.final, pure.} = object
+    ArgumentArray* {.unchecked.} = array[0, Argument]
+    Arguments* {.final, pure.} = object
         num_entries*: cint
-        entries*: ptr TableEntry
-    TableEntry* {.final, pure.} = object
+        entries*: ptr Argument
+    Argument* {.final, pure.} = object
         key*: Bytes
-
+        value*: FieldValue
     Socket* {.final, pure.} = object
     PSocket* = ptr Socket
     ConnectionState* {.final, pure.} = object
@@ -77,7 +104,7 @@ type
         flags: cuint
         content_type: Bytes
         content_encoding: Bytes
-        headers: Table
+        headers: Arguments
         delivery_mode: cushort
         priority: cushort
         correlation_id: Bytes
@@ -122,9 +149,10 @@ type
         routing_key*: string
         consumer_tag*: string
 
+
 const
     empty_bytes* = Bytes(len: 0, bytes: nil)
-    empty_table* = Table(num_entries: 0, entries: nil)
+    empty_arguments* = Arguments(num_entries: 0, entries: nil)
     AMQP_BASIC_CONTENT_TYPE_FLAG = (1 shl 15)
     AMQP_BASIC_CONTENT_ENCODING_FLAG = (1 shl 14)
     AMQP_BASIC_HEADERS_FLAG = (1 shl 13)
@@ -149,10 +177,10 @@ proc login*(state: PConnectionState, vhost: cstring, channel_max: cint, frame_ma
 proc error_string2*(err: int): cstring {.cdecl, importc: "amqp_error_string2", dynlib: rmqdll.}
 proc channel_open*(conn: PConnectionState, channel: Channel): int {.cdecl, importc: "amqp_channel_open", dynlib: rmqdll.}
 proc get_rpc_reply*(conn: PConnectionState): RPCReply {.cdecl, importc: "amqp_get_rpc_reply", dynlib: rmqdll.}
-proc basic_consume*(conn: PConnectionState, channel: Channel, queue: Bytes, consumer_tag: Bytes, no_local: Boolean, no_ack: Boolean, exclusive: Boolean, arguments: Table): ConsumeOK {.cdecl, importc: "amqp_basic_consume", dynlib: rmqdll.}
+proc basic_consume*(conn: PConnectionState, channel: Channel, queue: Bytes, consumer_tag: Bytes, no_local: Boolean, no_ack: Boolean, exclusive: Boolean, arguments: Arguments): ConsumeOK {.cdecl, importc: "amqp_basic_consume", dynlib: rmqdll.}
 proc cstring_bytes*(cstr: cstring): Bytes {.cdecl, importc: "amqp_cstring_bytes", dynlib: rmqdll.}
-proc queue_declare*(conn: PConnectionState, channel: Channel, queue: Bytes, passive: Boolean, durable: Boolean, exclusive: Boolean, auto_delete: Boolean, arguments: Table): ptr QueueDeclareOK {.cdecl, importc: "amqp_queue_declare", dynlib: rmqdll.}
-proc queue_bind*(conn: PConnectionState, channel: Channel, queue: Bytes, exchange: Bytes, bindingKey: Bytes, arguments: Table) {.cdecl, importc: "amqp_queue_bind", dynlib: rmqdll.}
+proc queue_declare*(conn: PConnectionState, channel: Channel, queue: Bytes, passive: Boolean, durable: Boolean, exclusive: Boolean, auto_delete: Boolean, arguments: Arguments): ptr QueueDeclareOK {.cdecl, importc: "amqp_queue_declare", dynlib: rmqdll.}
+proc queue_bind*(conn: PConnectionState, channel: Channel, queue: Bytes, exchange: Bytes, bindingKey: Bytes, arguments: Arguments) {.cdecl, importc: "amqp_queue_bind", dynlib: rmqdll.}
 proc consume_message(conn: PConnectionState, envelope: ptr Envelope, timeout: ptr Timeval, flags: cint): RPCReply {.cdecl, importc: "amqp_consume_message", dynlib: rmqdll.}
 proc maybe_release_buffers*(conn: PConnectionState) {.cdecl, importc: "amqp_maybe_release_buffers", dynlib: rmqdll.}
 proc read_message*(conn: PConnectionState, channel: Channel, message: ptr Message, n: cuint): RPCReply {.cdecl, importc: "amqp_read_message", dynlib: rmqdll.}
@@ -166,10 +194,13 @@ proc basic_ack*(conn: PConnectionState, channel: Channel, delivery_tag: culong, 
 
 proc basic_reject*(conn: PConnectionState, channel: Channel, delivery_tag: culong, multiple: Boolean, requeue: Boolean): cint {.cdecl, importc: "amqp_basic_ack", dynlib: rmqdll.}
 
-proc exchange_declare*(conn: PConnectionState, channel: Channel, exchange: Bytes, type_type: Bytes, passive: Boolean, durable: Boolean, auto_delete: Boolean, internal: Boolean, arguments: Table): ExchangeDeclareOk {.cdecl, importc: "amqp_exchange_declare", dynlib: rmqdll.}
+proc exchange_declare*(conn: PConnectionState, channel: Channel, exchange: Bytes, type_type: Bytes, passive: Boolean, durable: Boolean, auto_delete: Boolean, internal: Boolean, arguments: Arguments): ExchangeDeclareOk {.cdecl, importc: "amqp_exchange_declare", dynlib: rmqdll.}
 
 proc basic_qos*(conn: PConnectionState, channel: Channel, prefetch_size: cuint = 0, prefetch_count: cushort = 0, global_global: Boolean = Boolean(false)): BasicQoSOK {.cdecl, importc: "amqp_basic_qos", dynlib: rmqdll.}
 
+proc pool_alloc*(pool: ptr Pool, amount: csize): pointer {.cdecl, importc: "amqp_pool_alloc", dynlib: rmqdll.}
+
+proc init_pool*(pool: ptr Pool, pagesize: csize) {.cdecl, importc: "init_amqp_pool", dynlib: rmqdll.}
 
 proc bytes_string*(b: Bytes): string =
     if b.len > 0:
@@ -198,8 +229,8 @@ proc connect*(host: cstring, port: cint, vhost: cstring, user: cstring, password
 proc setup_queue*(conn: PConnectionState, channel: Channel, queuename: string, no_local: bool = false, no_ack: bool = false, exclusive: bool = false, passive: bool = false, durable: bool = true, auto_delete: bool = false) =
     discard channel_open(conn, cushort(channel))
     check(conn)
-    discard queue_declare(conn, cushort(channel), cstring_bytes(queuename), cuchar(passive), cuchar(durable), cuchar(exclusive), cuchar(auto_delete), empty_table)
-    discard basic_consume(conn, cushort(channel), cstring_bytes(queuename), empty_bytes, cuchar(no_local), cuchar(no_ack), cuchar(exclusive), empty_table)
+    discard queue_declare(conn, cushort(channel), cstring_bytes(queuename), cuchar(passive), cuchar(durable), cuchar(exclusive), cuchar(auto_delete), empty_arguments)
+    discard basic_consume(conn, cushort(channel), cstring_bytes(queuename), empty_bytes, cuchar(no_local), cuchar(no_ack), cuchar(exclusive), empty_arguments)
     check(conn)
 
 proc get_message*(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cint = 0): BasicMessage =
@@ -221,6 +252,30 @@ proc ack_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage) =
 proc reject_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage) =
     let ok = basic_reject(conn, channel, msg.delivery_tag, cuchar(0), cuchar(0))
     assert ok == 0
+
+proc makeStringArgument*(key: string, value: string): Argument =
+    var arg: Argument
+    arg.key = cstring_bytes(key)
+    arg.value = FieldValue()
+    arg.value.kind = 'S'
+    arg.value.value.bytes = cstring_bytes(value)
+    return arg
+
+proc makeArguments*(t: Table[string, string]): Arguments =
+    var
+        pool: Pool
+        argument_array: ptr ArgumentArray
+        arguments: Arguments
+        alloc_size = t.len * sizeof(Argument)
+    arguments = Arguments(num_entries: 0, entries: nil)
+    init_pool(addr pool, 2)
+    argument_array = cast[ptr ArgumentArray](pool_alloc(addr pool, t.len * sizeof(Argument)))
+    for key, value in t.pairs:
+        let arg = makeStringArgument(key, value)
+        argument_array[arguments.num_entries] = arg
+        arguments.num_entries += 1
+    arguments.entries = cast[ptr Argument](argument_array)
+    return arguments
 
 when isMainModule:
     var

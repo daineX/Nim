@@ -1,8 +1,7 @@
 from json import JsonNode, parseJson, `{}`, `[]`, getNum, getStr, getFNum, JsonParsingError
 import tables
 from sequtils import insert, concat, deduplicate
-from librabbitmq import exchange_declare, queue_declare, queue_bind, Channel, PConnectionState, connect, MAX_CHANNELS, cstring_bytes, empty_table, Boolean, basic_qos, empty_bytes, basic_consume, get_message, ack_message, check, channel_open, bytes_string, reject_message
-from strutils import `%`
+from librabbitmq import exchange_declare, queue_declare, queue_bind, Channel, PConnectionState, connect, MAX_CHANNELS, cstring_bytes, empty_arguments, Boolean, basic_qos, empty_bytes, basic_consume, get_message, ack_message, check, channel_open, bytes_string, reject_message, Arguments, makeArguments
 
 
 type
@@ -45,7 +44,7 @@ proc newTransport*(host: cstring, port: cint, vhost: cstring, user: cstring, pas
         conn = connect(host, port, vhost, user, password)
         channel: Channel = 1
     discard channel_open(conn, channel)
-    discard exchange_declare(conn, channel, cstring_bytes(exchange), cstring_bytes(exchange_type), FALSE, TRUE, FALSE, FALSE, empty_table)
+    discard exchange_declare(conn, channel, cstring_bytes(exchange), cstring_bytes(exchange_type), FALSE, TRUE, FALSE, FALSE, empty_arguments)
     check(conn)
     return Transport(conn: conn,
                      current_channel: channel,
@@ -81,16 +80,26 @@ proc newDomainEventFromJson*(json_msg: string): DomainEvent =
 
 proc bind_routing_keys(transport: Transport, queue_name: cstring, binding_keys: seq[string], handler: consume_callback) =
     for binding_key in binding_keys:
-        queue_bind(transport.conn, transport.channel, cstring_bytes(queue_name), cstring_bytes(transport.exchange), cstring_bytes(binding_key), empty_table)
+        queue_bind(transport.conn, transport.channel, cstring_bytes(queue_name), cstring_bytes(transport.exchange), cstring_bytes(binding_key), empty_arguments)
         transport.check
 
 proc register*(transport: Transport, handler: consume_callback, name: string, binding_keys: seq[string], dead_letter: bool = false, durable: bool = true, exclusive: bool = false, auto_delete: bool = false, max_retries: uint = 0) =
-    let channel = transport.channel
-    discard queue_declare(transport.conn, channel, cstring_bytes(name), FALSE, Boolean(durable), Boolean(exclusive), Boolean(auto_delete), empty_table)
+    let
+        channel = transport.channel
+        retry_exchange = name & "-retry"
+        delay_exchange = name & "-delay"
+        dead_letter_exchange = name & "-dlx"
+    var arguments: Arguments
+    if dead_letter:
+        arguments = makeArguments({"x-dead-letter-exchange": dead_letter_exchange}.toTable)
+    else:
+        arguments = empty_arguments
+    discard queue_declare(transport.conn, channel, cstring_bytes(name), FALSE, Boolean(durable), Boolean(exclusive), Boolean(auto_delete), arguments)
+    transport.check
     transport.bind_routing_keys(name, binding_keys, handler)
     discard basic_qos(transport.conn, channel, prefetch_count=1)
     transport.check
-    discard basic_consume(transport.conn, channel, cstring_bytes(name), cstring_bytes(name), FALSE, FALSE, FALSE, empty_table)
+    discard basic_consume(transport.conn, channel, cstring_bytes(name), cstring_bytes(name), FALSE, FALSE, FALSE, empty_arguments)
     transport.check
     transport.handlers[name] = handler
 
@@ -105,7 +114,7 @@ proc start_consuming*(transport: Transport) =
             handler(event)
             ack_message(transport.conn, msg.channel, msg)
         except JsonParsingError:
-            echo """Invalid JSON "$#"""" % [msg.content]
+            echo "Invalid JSON \"" & msg.content & "\""
             reject_message(transport.conn, msg.channel, msg)
 
 
@@ -119,15 +128,15 @@ when isMainModule:
         quit 0
     setControlCHook(handle_keyboard_interrupt)
 
-    proc print_message(event:DomainEvent) =
-        echo "Routing Key: $#" % [event.routing_key]
-        echo "Message: $#" % [event.data.pretty()]
+    proc print_message(event: DomainEvent) =
+        echo "Routing Key: " & event.routing_key
+        echo "Message: " & event.data.pretty()
         echo()
 
-    proc handle_foobar(event:DomainEvent) =
-        echo "This is foobar: $#" % [event.data.pretty()]
+    proc handle_foobar(event: DomainEvent) =
+        echo "This is foobar: $#" & event.data.pretty()
         echo()
 
-    t.register(print_message, "print-message", @["#"])
+    t.register(print_message, "print-message", @["#"], dead_letter=true)
     t.register(handle_foobar, "foobar-handler", @["foobar"])
     t.start_consuming()
