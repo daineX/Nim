@@ -54,13 +54,11 @@ proc newTransport*(host: cstring, port: cint, vhost: cstring, user: cstring, pas
                      handlers: initTable[string, consume_callback]())
 
 
-proc exchange_declare*(transport: Transport, exchange: string, exchange_type: cstring = "topic", passive: bool = false, durable: bool = true, auto_delete: bool = false, internal: bool = false, arguments: Arguments = empty_arguments) =
-    discard exchange_declare(transport.conn, transport.channel, cstring_bytes(exchange), cstring_bytes(exchange_type), Boolean(passive), Boolean(durable), Boolean(auto_delete), Boolean(internal), arguments)
+proc exchange_declare*(transport: Transport, exchange: string, passive: bool = false, durable: bool = false, auto_delete: bool = false, internal: bool = false, arguments: Arguments = empty_arguments) =
+    discard exchange_declare(transport.conn, transport.channel, cstring_bytes(exchange), cstring_bytes(transport.exchange_type), Boolean(passive), Boolean(durable), Boolean(auto_delete), Boolean(internal), arguments)
 
-proc queue_declare*(transport: Transport, queue_name: string, passive: bool = false, durable: bool = true, exclusive: bool = false, auto_delete: bool = false, arguments: Arguments = empty_arguments): string =
-    var res: ptr QueueDeclareOK
-    res = queue_declare(transport.conn, transport.channel, cstring_bytes(queue_name), Boolean(passive), Boolean(durable), Boolean(exclusive), Boolean(auto_delete), arguments)
-    return bytes_string(res[].queue)
+proc queue_declare*(transport: Transport, queue_name: string, passive: bool = false, durable: bool = false, exclusive: bool = false, auto_delete: bool = false, arguments: Arguments = empty_arguments) =
+    discard queue_declare(transport.conn, transport.channel, cstring_bytes(queue_name), Boolean(passive), Boolean(durable), Boolean(exclusive), Boolean(auto_delete), arguments)
 
 proc newDomainEvent*(data: JsonNode, routing_key: string = "", domain_object_id: int = 0, uuid_string: string = "", timestamp: float = 0.0, retries: uint = 0): DomainEvent =
     return DomainEvent(routing_key: routing_key,
@@ -88,9 +86,9 @@ proc newDomainEventFromJson*(json_msg: string): DomainEvent =
                           retries=retries)
 
 
-proc bind_routing_keys(transport: Transport, queue_name: cstring, binding_keys: seq[string]) =
+proc bind_routing_keys(transport: Transport, exchange: cstring, queue_name: cstring, binding_keys: seq[string]) =
     for binding_key in binding_keys:
-        queue_bind(transport.conn, transport.channel, cstring_bytes(queue_name), cstring_bytes(transport.exchange), cstring_bytes(binding_key), empty_arguments)
+        queue_bind(transport.conn, transport.channel, cstring_bytes(queue_name), cstring_bytes(exchange), cstring_bytes(binding_key), empty_arguments)
         transport.check
 
 proc register*(transport: Transport, handler: consume_callback, name: string, binding_keys: seq[string], dead_letter: bool = false, durable: bool = true, exclusive: bool = false, auto_delete: bool = false, max_retries: uint = 0) =
@@ -99,17 +97,33 @@ proc register*(transport: Transport, handler: consume_callback, name: string, bi
         retry_exchange = name & "-retry"
         delay_exchange = name & "-delay"
         dead_letter_exchange = name & "-dlx"
-    var arguments: Arguments
+        wait_queue = name & "-wait"
+        dead_letter_queue = name & "-dl"
+
+    var
+        arguments: Arguments
+        retry_arguments: Arguments
+
+    # Create main queue
     if dead_letter:
-        var dead_letter_queue = transport.queue_declare(name & "-dlx")
-        transport.exchange_declare(dead_letter_exchange, exchange_type=transport.exchange_type)
-        transport.bind_routing_keys(dead_letter_queue, binding_keys)
+        transport.queue_declare(dead_letter_queue, durable=true)
+        transport.exchange_declare(dead_letter_exchange)
+        transport.bind_routing_keys(dead_letter_exchange, dead_letter_queue, binding_keys)
         arguments = makeArguments({"x-dead-letter-exchange": dead_letter_exchange}.toTable)
     else:
         arguments = empty_arguments
-    discard transport.queue_declare(name, durable=durable, exclusive=exclusive, auto_delete=auto_delete, arguments=arguments)
+    transport.queue_declare(name, durable=durable, exclusive=exclusive, auto_delete=auto_delete, arguments=arguments)
     transport.check
-    transport.bind_routing_keys(name, binding_keys)
+    transport.bind_routing_keys(transport.exchange, name, binding_keys)
+
+    # Create wait queue for retries
+    transport.exchange_declare(retry_exchange)
+    transport.exchange_declare(delay_exchange)
+    retry_arguments = makeArguments({"x-dead-letter-exchange": retry_exchange}.toTable)
+    transport.queue_declare(wait_queue, durable=durable, arguments=retry_arguments)
+
+    transport.bind_routing_keys(delay_exchange, wait_queue, binding_keys)
+    transport.bind_routing_keys(retry_exchange, name, binding_keys)
 
     discard basic_qos(transport.conn, channel, prefetch_count=1)
     transport.check
@@ -129,7 +143,7 @@ proc start_consuming*(transport: Transport) =
             ack_message(transport.conn, msg.channel, msg)
         except JsonParsingError:
             echo "Invalid JSON \"" & msg.content & "\""
-            reject_message(transport.conn, msg.channel, msg)
+            reject_message(transport.conn, msg.channel, msg, requeue=false)
 
 
 when isMainModule:
@@ -152,5 +166,5 @@ when isMainModule:
         echo()
 
     t.register(print_message, "print-message", @["#"], dead_letter=true)
-    t.register(handle_foobar, "foobar-handler", @["foobar"])
+    t.register(handle_foobar, "foobar-handler", @["foobar"], dead_letter=true)
     t.start_consuming()
