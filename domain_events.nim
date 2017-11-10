@@ -1,8 +1,11 @@
-from json import JsonNode, parseJson, `{}`, `[]`, getNum, getStr, getFNum, JsonParsingError
+from json import JsonNode, parseJson, `{}`, `[]`, getNum, getStr, getFNum, JsonParsingError, contains
 import tables
 from sequtils import insert, concat, deduplicate
-from librabbitmq import exchange_declare, queue_declare, queue_bind, Channel, PConnectionState, connect, MAX_CHANNELS, cstring_bytes, empty_arguments, Boolean, basic_qos, empty_bytes, basic_consume, get_message, ack_message, check, channel_open, bytes_string, reject_message, Arguments, makeArguments, QueueDeclareOK
+from strutils import parseUInt
+from librabbitmq import exchange_declare, queue_declare, queue_bind, Channel, PConnectionState, connect, MAX_CHANNELS, cstring_bytes, empty_arguments, Boolean, basic_qos, empty_bytes, basic_consume, get_message, ack_message, check, channel_open, bytes_string, reject_message, Arguments, makeArguments, QueueDeclareOK, publish_message, setExpiration, jsonFromArguments
 
+
+from json import pretty
 
 type
     DomainEvent* = ref object of RootObj
@@ -19,6 +22,9 @@ type
         exchange: cstring
         exchange_type: cstring
         handlers: Table[string, consume_callback]
+        max_retries: Table[string, uint]
+    Retry* = ref object of Exception
+
 const
     FALSE* = Boolean(false)
     TRUE* = Boolean(true)
@@ -51,7 +57,8 @@ proc newTransport*(host: cstring, port: cint, vhost: cstring, user: cstring, pas
                      current_channel: channel,
                      exchange: exchange,
                      exchange_type: exchange_type,
-                     handlers: initTable[string, consume_callback]())
+                     handlers: initTable[string, consume_callback](),
+                     max_retries: initTable[string, uint]())
 
 
 proc exchange_declare*(transport: Transport, exchange: string, passive: bool = false, durable: bool = false, auto_delete: bool = false, internal: bool = false, arguments: Arguments = empty_arguments) =
@@ -130,19 +137,42 @@ proc register*(transport: Transport, handler: consume_callback, name: string, bi
     discard basic_consume(transport.conn, channel, cstring_bytes(name), cstring_bytes(name), FALSE, FALSE, FALSE, empty_arguments)
     transport.check
     transport.handlers[name] = handler
+    transport.max_retries[name] = max_retries
 
 proc start_consuming*(transport: Transport) =
     while true:
         let
             msg = get_message(transport.conn)
             handler = transport.handlers[msg.consumer_tag]
-        echo msg.content
+            max_retries = transport.max_retries[msg.consumer_tag]
+        var event: DomainEvent
         try:
-            let event = newDomainEventFromJson(msg.content)
-            handler(event)
-            ack_message(transport.conn, msg.channel, msg)
+            event = newDomainEventFromJson(msg.content)
         except JsonParsingError:
             echo "Invalid JSON \"" & msg.content & "\""
+            reject_message(transport.conn, msg.channel, msg, requeue=false)
+        try:
+            handler(event)
+            ack_message(transport.conn, msg.channel, msg)
+        except Retry:
+            let
+                error = getCurrentException()
+                delay_exchange = msg.consumer_tag & "-delay"
+            var
+                props = msg.properties
+                headers = jsonFromArguments(msg.properties.headers)
+            if headers.contains("x-death"):
+                event.retries = uint(headers{"x-death"}[0]{"count"}.getNum)
+            if event.retries < max_retries:
+                props.setExpiration(0.1)
+                echo "Retrying event " & msg.routing_key & " in 2s."
+                ack_message(transport.conn, msg.channel, msg)
+                echo props.flags
+                publish_message(transport.conn, msg.channel, exchange=delay_exchange, routing_key=msg.routing_key, body=msg.content, properties=props)
+            else:
+                echo "Exceeded max retries " & ($ max_retries) & " for event " & event.routing_key & "."
+                reject_message(transport.conn, msg.channel, msg, requeue=false)
+        except:
             reject_message(transport.conn, msg.channel, msg, requeue=false)
 
 
@@ -162,9 +192,13 @@ when isMainModule:
         echo()
 
     proc handle_foobar(event: DomainEvent) =
-        echo "This is foobar: $#" & event.data.pretty()
+        echo "This is foobar: " & event.data.pretty()
         echo()
+
+    proc always_retry(event: DomainEvent) =
+        raise Retry()
 
     t.register(print_message, "print-message", @["#"], dead_letter=true)
     t.register(handle_foobar, "foobar-handler", @["foobar"], dead_letter=true)
+    t.register(always_retry, "retry-handler", @["retry"], max_retries=3)
     t.start_consuming()

@@ -9,7 +9,8 @@ else:
     rmqdll* = "librabbitmq.so.4"
 
 from posix import Timeval
-from tables import Table, pairs, len
+from tables import Table, pairs, len, initTable, `[]=`
+from json import JsonNode, newJArray, newJString, newJObject, add, newJInt
 
 type
     Decimal* = object
@@ -37,6 +38,7 @@ type
     Array* = object
         num_entries*: cint
         entries: ptr FieldValue
+    FieldValueArray* {.unchecked.} = array[0, FieldValue]
     Bytes* = object
         len*: csize
         bytes*: ptr cchar
@@ -101,21 +103,21 @@ type
         AMQP_SASL_METHOD_EXTERNAL = 1
 
     Properties* {.final, pure.} = object
-        flags: cuint
-        content_type: Bytes
-        content_encoding: Bytes
-        headers: Arguments
-        delivery_mode: cushort
-        priority: cushort
-        correlation_id: Bytes
-        reply_to: Bytes
-        expiration: Bytes
-        message_id: Bytes
-        timestamp: culong
-        type_type: Bytes
-        user_id: Bytes
-        app_id: Bytes
-        cluster_id: Bytes
+        flags*: cuint
+        content_type*: Bytes
+        content_encoding*: Bytes
+        headers*: Arguments
+        delivery_mode*: cushort
+        priority*: cushort
+        correlation_id*: Bytes
+        reply_to*: Bytes
+        expiration*: Bytes
+        message_id*: Bytes
+        timestamp*: culong
+        type_type*: Bytes
+        user_id*: Bytes
+        app_id*: Bytes
+        cluster_id*: Bytes
 
     Message* {.final, pure.} = object
         properties*: Properties
@@ -148,6 +150,7 @@ type
         channel*: Channel
         routing_key*: string
         consumer_tag*: string
+        properties*: Properties
 
 
 const
@@ -159,14 +162,14 @@ const
     AMQP_BASIC_DELIVERY_MODE_FLAG = (1 shl 12)
     AMQP_BASIC_PRIORITY_FLAG = (1 shl 11)
     AMQP_BASIC_CORRELATION_ID_FLAG = (1 shl 10)
-    AMQP_BASIC_REPLY_TO_FLAG= (1 shl 9)
-    AMQP_BASIC_EXPIRATION_FLAG= (1 shl 8)
-    AMQP_BASIC_MESSAGE_ID_FLAG= (1 shl 7)
-    AMQP_BASIC_TIMESTAMP_FLAG= (1 shl 6)
-    AMQP_BASIC_TYPE_FLAG= (1 shl 5)
-    AMQP_BASIC_USER_ID_FLAG= (1 shl 4)
-    AMQP_BASIC_APP_ID_FLAG= (1 shl 3)
-    AMQP_BASIC_CLUSTER_ID_FLAG= (1 shl 2)
+    AMQP_BASIC_REPLY_TO_FLAG = (1 shl 9)
+    AMQP_BASIC_EXPIRATION_FLAG = (1 shl 8)
+    AMQP_BASIC_MESSAGE_ID_FLAG = (1 shl 7)
+    AMQP_BASIC_TIMESTAMP_FLAG = (1 shl 6)
+    AMQP_BASIC_TYPE_FLAG = (1 shl 5)
+    AMQP_BASIC_USER_ID_FLAG = (1 shl 4)
+    AMQP_BASIC_APP_ID_FLAG = (1 shl 3)
+    AMQP_BASIC_CLUSTER_ID_FLAG = (1 shl 2)
     MAX_CHANNELS* = 32768
 
 proc new_connection*: PConnectionState {.cdecl, importc: "amqp_new_connection", dynlib: rmqdll.}
@@ -194,6 +197,8 @@ proc basic_ack*(conn: PConnectionState, channel: Channel, delivery_tag: culong, 
 
 proc basic_reject*(conn: PConnectionState, channel: Channel, delivery_tag: culong, multiple: Boolean, requeue: Boolean): cint {.cdecl, importc: "amqp_basic_reject", dynlib: rmqdll.}
 
+proc basic_publish*(conn: PConnectionState, channel: Channel, exchange: Bytes, routing_key: Bytes, mandatory: Boolean, immediate: Boolean, properties: Properties, body: Bytes): cint {.cdecl, importc: "amqp_basic_publish", dynlib: rmqdll.}
+
 proc exchange_declare*(conn: PConnectionState, channel: Channel, exchange: Bytes, type_type: Bytes, passive: Boolean, durable: Boolean, auto_delete: Boolean, internal: Boolean, arguments: Arguments): ExchangeDeclareOk {.cdecl, importc: "amqp_exchange_declare", dynlib: rmqdll.}
 
 proc basic_qos*(conn: PConnectionState, channel: Channel, prefetch_size: cuint = 0, prefetch_count: cushort = 0, global_global: Boolean = Boolean(false)): BasicQoSOK {.cdecl, importc: "amqp_basic_qos", dynlib: rmqdll.}
@@ -201,6 +206,10 @@ proc basic_qos*(conn: PConnectionState, channel: Channel, prefetch_size: cuint =
 proc pool_alloc*(pool: ptr Pool, amount: csize): pointer {.cdecl, importc: "amqp_pool_alloc", dynlib: rmqdll.}
 
 proc init_pool*(pool: ptr Pool, pagesize: csize) {.cdecl, importc: "init_amqp_pool", dynlib: rmqdll.}
+
+proc setExpiration*(props: var Properties, amount: float) =
+    props.expiration = cstring_bytes($ (amount * 1000).toInt)
+    props.flags = props.flags or AMQP_BASIC_EXPIRATION_FLAG
 
 proc bytes_string*(b: Bytes): string =
     if b.len > 0:
@@ -236,14 +245,13 @@ proc setup_queue*(conn: PConnectionState, channel: Channel, queuename: string, n
 proc get_message*(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cint = 0): BasicMessage =
     var envelope: Envelope
     maybe_release_buffers(conn)
-    check_reply(consume_message(conn, addr envelope, timeout, flags))
-    var msg = BasicMessage(content: $ envelope.message.body,
-                           delivery_tag: envelope.delivery_tag,
-                           channel: envelope.channel,
-                           routing_key: $ envelope.routing_key,
-                           consumer_tag: $ envelope.consumer_tag)
-    destroy_envelope(addr envelope)
-    return msg
+    discard consume_message(conn, addr envelope, timeout, flags)
+    return BasicMessage(content: $ envelope.message.body,
+                        delivery_tag: envelope.delivery_tag,
+                        channel: envelope.channel,
+                        routing_key: $ envelope.routing_key,
+                        consumer_tag: $ envelope.consumer_tag,
+                        properties: envelope.message.properties)
 
 proc ack_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage) =
     let ok = basic_ack(conn, channel, msg.delivery_tag, cuchar(0))
@@ -251,6 +259,11 @@ proc ack_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage) =
 
 proc reject_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage, multiple: bool = false, requeue: bool = false) =
     let ok = basic_reject(conn, channel, msg.delivery_tag, Boolean(multiple), Boolean(requeue))
+    assert ok == 0
+
+proc publish_message*(conn: PConnectionState, channel: Channel, exchange: string, routing_key: string, mandatory: bool = false, immediate: bool = false, properties: Properties, body: string) =
+    let ok = basic_publish(conn, channel, cstring_bytes(exchange), cstring_bytes(routing_key), Boolean(mandatory), Boolean(immediate), properties,
+    cstring_bytes(body))
     assert ok == 0
 
 proc makeStringArgument*(key: string, value: string): Argument =
@@ -268,7 +281,7 @@ proc makeArguments*(t: Table[string, string]): Arguments =
         arguments: Arguments
         alloc_size = t.len * sizeof(Argument)
     arguments = Arguments(num_entries: 0, entries: nil)
-    init_pool(addr pool, 2)
+    init_pool(addr pool, 1024)
     argument_array = cast[ptr ArgumentArray](pool_alloc(addr pool, t.len * sizeof(Argument)))
     for key, value in t.pairs:
         let arg = makeStringArgument(key, value)
@@ -276,6 +289,41 @@ proc makeArguments*(t: Table[string, string]): Arguments =
         arguments.num_entries += 1
     arguments.entries = cast[ptr Argument](argument_array)
     return arguments
+
+proc jsonFromArguments*(arguments: Arguments): JsonNode
+
+proc jsonFromFieldValue*(value: FieldValue): JsonNode =
+    if value.kind == 'S':
+        return newJString($ value.value.bytes)
+    elif value.kind == 'l':
+        return newJInt(BiggestInt(value.value.u64))
+    elif value.kind == 'A':
+        var
+            arr = newJArray()
+            f = cast[ptr FieldValueArray](value.value.array_array.entries)
+        for idx in 0 .. value.value.array_array.num_entries - 1:
+            let node = jsonFromFieldValue(f[idx])
+            if node != nil:
+                arr.add(node)
+        return arr
+    elif value.kind == 'F':
+        return jsonFromArguments(value.value.table)
+
+proc jsonFromArguments*(arguments: Arguments): JsonNode =
+    var
+        idx = 0
+        j = newJObject()
+        arguments_array: ptr ArgumentArray = nil
+    if arguments.num_entries > 0:
+        arguments_array = cast[ptr ArgumentArray](arguments.entries)
+        while idx < arguments.num_entries:
+            let
+                arg = arguments_array[idx]
+                node = jsonFromFieldValue(arg.value)
+            if node != nil:
+                j.add($ arg.key, node)
+            idx += 1
+    return j
 
 when isMainModule:
     var
