@@ -297,7 +297,7 @@ proc jsonFromFieldValue*(value: FieldValue): JsonNode =
         return newJString($ value.value.bytes)
     elif value.kind == 'l':
         return newJInt(BiggestInt(value.value.u64))
-    elif value.kind == 'A':
+    elif value.kind == 'A' and value.value.array_array.num_entries > 0:
         var
             arr = newJArray()
             f = cast[ptr FieldValueArray](value.value.array_array.entries)

@@ -1,11 +1,10 @@
+from logging import debug, info, warn, addHandler, newConsoleLogger
 from json import JsonNode, parseJson, `{}`, `[]`, getNum, getStr, getFNum, JsonParsingError, contains
-import tables
 from sequtils import insert, concat, deduplicate
-from strutils import parseUInt
-from librabbitmq import exchange_declare, queue_declare, queue_bind, Channel, PConnectionState, connect, MAX_CHANNELS, cstring_bytes, empty_arguments, Boolean, basic_qos, empty_bytes, basic_consume, get_message, ack_message, check, channel_open, bytes_string, reject_message, Arguments, makeArguments, QueueDeclareOK, publish_message, setExpiration, jsonFromArguments
+from strutils import parseUInt, `%`
+from tables import Table, initTable, toTable, `[]`, `[]=`
 
-
-from json import pretty
+import librabbitmq
 
 type
     DomainEvent* = ref object of RootObj
@@ -24,6 +23,7 @@ type
         handlers: Table[string, consume_callback]
         max_retries: Table[string, uint]
     Retry* = ref object of Exception
+        delay: float
 
 const
     FALSE* = Boolean(false)
@@ -145,58 +145,62 @@ proc start_consuming*(transport: Transport) =
             msg = get_message(transport.conn)
             handler = transport.handlers[msg.consumer_tag]
             max_retries = transport.max_retries[msg.consumer_tag]
-        var event: DomainEvent
+        var
+            event: DomainEvent
+            headers = jsonFromArguments(msg.properties.headers)
+            props = msg.properties
         try:
             event = newDomainEventFromJson(msg.content)
-        except JsonParsingError:
-            echo "Invalid JSON \"" & msg.content & "\""
+        except JsonParsingError, KeyError:
+            warn "Invalid JSON \"$#\"" % [msg.content]
             reject_message(transport.conn, msg.channel, msg, requeue=false)
+            continue
+
+        if headers.contains("x-death"):
+            event.retries = uint(headers{"x-death"}[0]{"count"}.getNum)
+
         try:
             handler(event)
             ack_message(transport.conn, msg.channel, msg)
         except Retry:
             let
-                error = getCurrentException()
+                error = Retry(getCurrentException())
                 delay_exchange = msg.consumer_tag & "-delay"
-            var
-                props = msg.properties
-                headers = jsonFromArguments(msg.properties.headers)
-            if headers.contains("x-death"):
-                event.retries = uint(headers{"x-death"}[0]{"count"}.getNum)
             if event.retries < max_retries:
-                props.setExpiration(0.1)
-                echo "Retrying event " & msg.routing_key & " in 2s."
+                info "Retrying event \"$#\" in $#s" % [msg.routing_key, $ error.delay]
                 ack_message(transport.conn, msg.channel, msg)
-                echo props.flags
+
+                props.setExpiration(error.delay)
                 publish_message(transport.conn, msg.channel, exchange=delay_exchange, routing_key=msg.routing_key, body=msg.content, properties=props)
             else:
-                echo "Exceeded max retries " & ($ max_retries) & " for event " & event.routing_key & "."
+                info "Exceeded max retries ($#) for event \"$#\"" % [$ max_retries, event.routing_key]
                 reject_message(transport.conn, msg.channel, msg, requeue=false)
         except:
             reject_message(transport.conn, msg.channel, msg, requeue=false)
 
 
 when isMainModule:
-    from librabbitmq import destroy_connection
     from json import pretty
+    from math import pow
+
+    addHandler(newConsoleLogger())
+
     var t = newTransport("localhost", 5672, "/", "guest", "guest")
     proc handle_keyboard_interrupt() {.noconv.} =
         destroy_connection(t.conn)
-        echo "Destroyed connection."
+        debug "Destroyed connection."
         quit 0
     setControlCHook(handle_keyboard_interrupt)
 
     proc print_message(event: DomainEvent) =
-        echo "Routing Key: " & event.routing_key
-        echo "Message: " & event.data.pretty()
-        echo()
+        info "Routing Key: " & event.routing_key
+        info "Message: " & event.data.pretty()
 
     proc handle_foobar(event: DomainEvent) =
-        echo "This is foobar: " & event.data.pretty()
-        echo()
+        info "This is foobar: " & event.data.pretty()
 
     proc always_retry(event: DomainEvent) =
-        raise Retry()
+        raise Retry(delay: pow(2, float(event.retries) + 1.0))
 
     t.register(print_message, "print-message", @["#"], dead_letter=true)
     t.register(handle_foobar, "foobar-handler", @["foobar"], dead_letter=true)
