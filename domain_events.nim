@@ -1,8 +1,8 @@
 from logging import debug, info, warn, addHandler, newConsoleLogger
-from json import JsonNode, parseJson, `{}`, `[]`, getNum, getStr, getFNum, JsonParsingError, contains
+from json import JsonNode, parseJson, `{}`, `[]`, getNum, getStr, getFNum, JsonParsingError, contains, `%*`, `%`
 from sequtils import insert, concat, deduplicate
-from strutils import parseUInt, `%`
-from tables import Table, initTable, toTable, `[]`, `[]=`
+from strutils import `%`
+from tables import Table, initTable, `[]`, `[]=`
 
 import librabbitmq
 
@@ -117,7 +117,7 @@ proc register*(transport: Transport, callback: consume_callback, name: string, b
         transport.queue_declare(dead_letter_queue, durable=true)
         transport.exchange_declare(dead_letter_exchange)
         transport.bind_routing_keys(dead_letter_exchange, dead_letter_queue, binding_keys)
-        arguments = makeArguments({"x-dead-letter-exchange": dead_letter_exchange}.toTable)
+        arguments = makeArguments(%* {"x-dead-letter-exchange": dead_letter_exchange})
     else:
         arguments = empty_arguments
     transport.queue_declare(name, durable=durable, exclusive=exclusive, auto_delete=auto_delete, arguments=arguments)
@@ -127,7 +127,7 @@ proc register*(transport: Transport, callback: consume_callback, name: string, b
     # Create wait queue for retries
     transport.exchange_declare(retry_exchange)
     transport.exchange_declare(delay_exchange)
-    retry_arguments = makeArguments({"x-dead-letter-exchange": retry_exchange}.toTable)
+    retry_arguments = makeArguments(%* {"x-dead-letter-exchange": retry_exchange})
     transport.queue_declare(wait_queue, durable=durable, arguments=retry_arguments)
 
     transport.bind_routing_keys(delay_exchange, wait_queue, binding_keys)

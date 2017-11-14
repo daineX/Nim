@@ -9,8 +9,7 @@ else:
     rmqdll* = "librabbitmq.so.4"
 
 from posix import Timeval
-from tables import Table, pairs, len, initTable, `[]=`
-from json import JsonNode, newJArray, newJString, newJObject, add, newJInt
+from json import JsonNode, newJArray, newJString, newJObject, add, newJInt, len, pairs, JString, JInt, getNum, JObject
 
 type
     Decimal* = object
@@ -266,24 +265,36 @@ proc publish_message*(conn: PConnectionState, channel: Channel, exchange: string
     cstring_bytes(body))
     assert ok == 0
 
-proc makeStringArgument*(key: string, value: string): Argument =
+proc makeArguments*(j: JsonNode): Arguments
+
+proc makeArgument*(key: string, value: JsonNode): Argument =
     var arg: Argument
     arg.key = cstring_bytes(key)
     arg.value = FieldValue()
-    arg.value.kind = 'S'
-    arg.value.value.bytes = cstring_bytes(value)
+    case value.kind
+        of JString:
+            arg.value.kind = 'S'
+            arg.value.value.bytes = cstring_bytes(value.str)
+        of JInt:
+            arg.value.kind = 'l'
+            arg.value.value.u64 = culong(value.getNum)
+        of JObject:
+            arg.value.kind = 'F'
+            arg.value.value.table = makeArguments(value)
+        else:
+            discard
     return arg
 
-proc makeArguments*(t: Table[string, string]): Arguments =
+proc makeArguments*(j: JsonNode): Arguments =
     var
         pool: Pool
         argument_array: ptr ArgumentArray
         arguments: Arguments
     arguments = Arguments(num_entries: 0, entries: nil)
     init_pool(addr pool, 1024)
-    argument_array = cast[ptr ArgumentArray](pool_alloc(addr pool, t.len * sizeof(Argument)))
-    for key, value in t.pairs:
-        let arg = makeStringArgument(key, value)
+    argument_array = cast[ptr ArgumentArray](pool_alloc(addr pool, j.len * sizeof(Argument)))
+    for key, node in j.pairs:
+        let arg = makeArgument(key, node)
         argument_array[arguments.num_entries] = arg
         arguments.num_entries += 1
     arguments.entries = cast[ptr Argument](argument_array)
