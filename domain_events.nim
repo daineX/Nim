@@ -15,13 +15,15 @@ type
         timestamp: float
         retries: uint
     consume_callback* = proc(event: DomainEvent)
+    Handler* = ref object of RootObj
+        callback: consume_callback
+        max_retries: uint
     Transport* = ref object of RootObj
         current_channel: Channel
         conn: PConnectionState
         exchange: cstring
         exchange_type: cstring
-        handlers: Table[string, consume_callback]
-        max_retries: Table[string, uint]
+        handlers: Table[string, Handler]
     Retry* = ref object of Exception
         delay: float
 
@@ -57,8 +59,7 @@ proc newTransport*(host: cstring, port: cint, vhost: cstring, user: cstring, pas
                      current_channel: channel,
                      exchange: exchange,
                      exchange_type: exchange_type,
-                     handlers: initTable[string, consume_callback](),
-                     max_retries: initTable[string, uint]())
+                     handlers: initTable[string, Handler]())
 
 
 proc exchange_declare*(transport: Transport, exchange: string, passive: bool = false, durable: bool = false, auto_delete: bool = false, internal: bool = false, arguments: Arguments = empty_arguments) =
@@ -98,7 +99,7 @@ proc bind_routing_keys(transport: Transport, exchange: cstring, queue_name: cstr
         queue_bind(transport.conn, transport.channel, cstring_bytes(queue_name), cstring_bytes(exchange), cstring_bytes(binding_key), empty_arguments)
         transport.check
 
-proc register*(transport: Transport, handler: consume_callback, name: string, binding_keys: seq[string], dead_letter: bool = false, durable: bool = true, exclusive: bool = false, auto_delete: bool = false, max_retries: uint = 0) =
+proc register*(transport: Transport, callback: consume_callback, name: string, binding_keys: seq[string], dead_letter: bool = false, durable: bool = true, exclusive: bool = false, auto_delete: bool = false, max_retries: uint = 0) =
     let
         channel = transport.channel
         retry_exchange = name & "-retry"
@@ -136,15 +137,13 @@ proc register*(transport: Transport, handler: consume_callback, name: string, bi
     transport.check
     discard basic_consume(transport.conn, channel, cstring_bytes(name), cstring_bytes(name), FALSE, FALSE, FALSE, empty_arguments)
     transport.check
-    transport.handlers[name] = handler
-    transport.max_retries[name] = max_retries
+    transport.handlers[name] = Handler(callback: callback, max_retries: max_retries)
 
 proc start_consuming*(transport: Transport) =
     while true:
         let
             msg = get_message(transport.conn)
             handler = transport.handlers[msg.consumer_tag]
-            max_retries = transport.max_retries[msg.consumer_tag]
         var
             event: DomainEvent
             headers = jsonFromArguments(msg.properties.headers)
@@ -160,20 +159,20 @@ proc start_consuming*(transport: Transport) =
             event.retries = uint(headers{"x-death"}[0]{"count"}.getNum)
 
         try:
-            handler(event)
+            handler.callback(event)
             ack_message(transport.conn, msg.channel, msg)
         except Retry:
             let
                 error = Retry(getCurrentException())
                 delay_exchange = msg.consumer_tag & "-delay"
-            if event.retries < max_retries:
+            if event.retries < handler.max_retries:
                 info "Retrying event \"$#\" in $#s" % [msg.routing_key, $ error.delay]
                 ack_message(transport.conn, msg.channel, msg)
 
                 props.setExpiration(error.delay)
                 publish_message(transport.conn, msg.channel, exchange=delay_exchange, routing_key=msg.routing_key, body=msg.content, properties=props)
             else:
-                info "Exceeded max retries ($#) for event \"$#\"" % [$ max_retries, event.routing_key]
+                info "Exceeded max retries ($#) for event \"$#\"" % [$ handler.max_retries, event.routing_key]
                 reject_message(transport.conn, msg.channel, msg, requeue=false)
         except:
             reject_message(transport.conn, msg.channel, msg, requeue=false)

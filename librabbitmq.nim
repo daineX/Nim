@@ -279,7 +279,6 @@ proc makeArguments*(t: Table[string, string]): Arguments =
         pool: Pool
         argument_array: ptr ArgumentArray
         arguments: Arguments
-        alloc_size = t.len * sizeof(Argument)
     arguments = Arguments(num_entries: 0, entries: nil)
     init_pool(addr pool, 1024)
     argument_array = cast[ptr ArgumentArray](pool_alloc(addr pool, t.len * sizeof(Argument)))
