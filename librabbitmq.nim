@@ -13,12 +13,12 @@ from json import JsonNode, newJArray, newJString, newJObject, add, newJInt, len,
 
 type
     Decimal* = object
-        decimals*: cuchar
+        decimals*: Boolean
         value*: cuint
     FieldValueValue* {.union.} = object
         boolean*: Boolean
         i8*: cchar
-        u8*: cuchar
+        u8*: Boolean
         i16*: cshort
         u16*: cushort
         i32*: cint
@@ -32,7 +32,7 @@ type
         table*: Arguments
         array_array*: Array
     FieldValue* {.final, pure.} = object
-        kind*: cuchar
+        kind*: Boolean
         value*: FieldValueValue
     Array* = object
         num_entries*: cint
@@ -48,10 +48,10 @@ type
         raw: Bytes
 
     FramePayloadProtocolHeader* = object
-        transport_high: cuchar
-        transport_low: cuchar
-        protocol_version_major: cuchar
-        protocol_version_minor: cuchar
+        transport_high: Boolean
+        transport_low: Boolean
+        protocol_version_major: Boolean
+        protocol_version_minor: Boolean
 
     FramePayload* {.union.} = object
         method_method: Method
@@ -59,7 +59,7 @@ type
         body_fragment: Bytes
         protocol_header: FramePayloadProtocolHeader
     Frame* {.final, pure.} = object
-        frame_type: cuchar
+        frame_type: Boolean
         channel: Channel
         payload: FramePayload
 
@@ -128,7 +128,7 @@ type
         channel: Channel
         consumer_tag*: Bytes
         delivery_tag*: culong
-        redelivered*: cuchar
+        redelivered*: Boolean
         exchange*: Bytes
         routing_key*: Bytes
         message*: Message
@@ -150,6 +150,7 @@ type
         routing_key*: string
         consumer_tag*: string
         properties*: Properties
+    CheckError* = ref object of Exception
 
 
 const
@@ -170,6 +171,8 @@ const
     AMQP_BASIC_APP_ID_FLAG = (1 shl 3)
     AMQP_BASIC_CLUSTER_ID_FLAG = (1 shl 2)
     MAX_CHANNELS* = 32768
+    AMQP_TRUE* = Boolean(true)
+    AMQP_FALSE* = Boolean(false)
 
 proc new_connection*: PConnectionState {.cdecl, importc: "amqp_new_connection", dynlib: rmqdll.}
 proc destroy_connection*(conn: PConnectionState) {.cdecl, importc: "amqp_destroy_connection", dynlib: rmqdll.}
@@ -198,7 +201,10 @@ proc basic_reject*(conn: PConnectionState, channel: Channel, delivery_tag: culon
 
 proc basic_publish*(conn: PConnectionState, channel: Channel, exchange: Bytes, routing_key: Bytes, mandatory: Boolean, immediate: Boolean, properties: Properties, body: Bytes): cint {.cdecl, importc: "amqp_basic_publish", dynlib: rmqdll.}
 
-proc exchange_declare*(conn: PConnectionState, channel: Channel, exchange: Bytes, type_type: Bytes, passive: Boolean, durable: Boolean, auto_delete: Boolean, internal: Boolean, arguments: Arguments): ExchangeDeclareOk {.cdecl, importc: "amqp_exchange_declare", dynlib: rmqdll.}
+proc amqp_exchange_declare(conn: PConnectionState, channel: Channel, exchange: Bytes, type_type: Bytes, passive: Boolean, durable: Boolean, auto_delete: Boolean, internal: Boolean, arguments: Arguments): ExchangeDeclareOk {.cdecl, importc: "amqp_exchange_declare", dynlib: rmqdll.}
+
+proc exchange_declare*(conn: PConnectionState, channel: Channel, exchange: cstring, type_type: cstring, passive: bool = false, durable: bool = false, auto_delete: bool = false, internal: bool = false, arguments: Arguments = empty_arguments) =
+    discard amqp_exchange_declare(conn, channel, cstring_bytes(exchange), cstring_bytes(type_type), Boolean(passive), Boolean(durable), Boolean(auto_delete), Boolean(internal), arguments)
 
 proc basic_qos*(conn: PConnectionState, channel: Channel, prefetch_size: cuint = 0, prefetch_count: cushort = 0, global_global: Boolean = Boolean(false)): BasicQoSOK {.cdecl, importc: "amqp_basic_qos", dynlib: rmqdll.}
 
@@ -222,7 +228,8 @@ proc `$`(b: Bytes): string =
 proc check_reply*(reply: RPCReply) =
     if reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_LIBRARY_EXCEPTION:
         echo error_string2(reply.library_error)
-    assert(reply.reply_type == ResponseTypeEnum.AMQP_RESPONSE_NORMAL, msg=($ reply.reply_type))
+    if reply.reply_type != ResponseTypeEnum.AMQP_RESPONSE_NORMAL:
+        raise CheckError(msg: ($ reply.reply_type))
 
 proc check*(conn: PConnectionState) =
     check_reply(get_rpc_reply(conn))
@@ -237,8 +244,8 @@ proc connect*(host: cstring, port: cint, vhost: cstring, user: cstring, password
 proc setup_queue*(conn: PConnectionState, channel: Channel, queuename: string, no_local: bool = false, no_ack: bool = false, exclusive: bool = false, passive: bool = false, durable: bool = true, auto_delete: bool = false) =
     discard channel_open(conn, cushort(channel))
     check(conn)
-    discard queue_declare(conn, cushort(channel), cstring_bytes(queuename), cuchar(passive), cuchar(durable), cuchar(exclusive), cuchar(auto_delete), empty_arguments)
-    discard basic_consume(conn, cushort(channel), cstring_bytes(queuename), empty_bytes, cuchar(no_local), cuchar(no_ack), cuchar(exclusive), empty_arguments)
+    discard queue_declare(conn, cushort(channel), cstring_bytes(queuename), Boolean(passive), Boolean(durable), Boolean(exclusive), Boolean(auto_delete), empty_arguments)
+    discard basic_consume(conn, cushort(channel), cstring_bytes(queuename), empty_bytes, Boolean(no_local), Boolean(no_ack), Boolean(exclusive), empty_arguments)
     check(conn)
 
 proc get_message*(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cint = 0): BasicMessage =
@@ -253,7 +260,7 @@ proc get_message*(conn: PConnectionState, timeout: ptr Timeval = nil, flags: cin
                         properties: envelope.message.properties)
 
 proc ack_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage) =
-    let ok = basic_ack(conn, channel, msg.delivery_tag, cuchar(0))
+    let ok = basic_ack(conn, channel, msg.delivery_tag, Boolean(0))
     assert ok == 0
 
 proc reject_message*(conn: PConnectionState, channel: Channel, msg: BasicMessage, multiple: bool = false, requeue: bool = false) =
