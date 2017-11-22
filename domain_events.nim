@@ -57,6 +57,8 @@ proc newTransport*(host: cstring, port: cint, vhost: cstring, user: cstring,
                        handlers: initTable[string, Handler]())
     result.check
 
+proc destroy_connection*(transport: Transport) =
+    destroy_connection(transport.conn)
 
 proc exchange_declare*(transport: Transport, exchange: cstring, durable: bool = false, arguments: Arguments = empty_arguments) =
     exchange_declare(transport.conn, transport.channel, exchange,
@@ -169,19 +171,20 @@ proc start_consuming*(transport: Transport) =
             ack_message(transport.conn, msg.channel, msg)
         except Retry:
             let
-                error = Retry(getCurrentException())
+                err = Retry(getCurrentException())
                 delay_exchange = msg.consumer_tag & "-delay"
             if event.retries < handler.max_retries:
-                info "Retrying event \"$#\" in $#s" % [msg.routing_key, $ error.delay]
+                info "Retrying event \"$#\" in $#s" % [msg.routing_key, $ err.delay]
                 ack_message(transport.conn, msg.channel, msg)
 
-                props.setExpiration(error.delay)
+                props.setExpiration(err.delay)
                 publish_message(transport.conn, msg.channel, exchange=delay_exchange,
                                 routing_key=msg.routing_key, body=msg.content, properties=props)
             else:
                 info "Exceeded max retries ($#) for event \"$#\"" % [$ handler.max_retries, msg.routing_key]
                 reject_message(transport.conn, msg.channel, msg, requeue=false)
         except:
+            error getCurrentException().msg
             reject_message(transport.conn, msg.channel, msg, requeue=false)
 
 
@@ -191,9 +194,9 @@ when isMainModule:
 
     addHandler(newConsoleLogger())
     try:
-        var t = newTransport("localhost", 5672, "/", "guest", "guest")
+        let t = newTransport("localhost", 5672, "/", "guest", "guest")
         proc handle_keyboard_interrupt() {.noconv.} =
-            destroy_connection(t.conn)
+            t.destroy_connection()
             debug "Destroyed connection."
             quit 0
         setControlCHook(handle_keyboard_interrupt)
