@@ -1,11 +1,11 @@
 # from tables import TableRef, initTable, add, pairs
 import tables
 from algorithm import sorted
-from httpclient import newHttpClient, get
-from cgi import encodeUrl
-from uri import parseUri, `/`, `$`
+from httpcore import is2xx
+from httpclient import newHttpClient, get, code, body
+from uri import encodeUrl, initUri, parseUri, `/`, `$`
 from json import items, JsonNode, parseJson, `[]`, `{}`, `$`, hasKey, JArray, copy
-from strutils import join, replace, startsWith, `%`, intToStr, spaces, split
+from strutils import align, join, replace, startsWith, `%`, intToStr, spaces, split
 from sequtils import mapIt, toSeq, concat, deduplicate, distribute
 
 const apiURL = "https://api.guildwars2.com/v2/"
@@ -22,32 +22,46 @@ type
         id: int
         name: string
         attributes: seq[Attribute]
+    Parameter = (string, string)
+    Query = openArray[Parameter]
 
 let skinnableSlots = @["Backpack", "Coat", "Boots", "Gloves", "Helm", "HelmAquatic",
                        "Leggings", "Shoulders", "WeaponA1", "WeaponA2",
                        "WeaponB1", "WeaponB2", "WeaponAquaticA", "WeaponAquaticB"]
 
-proc buildRequest(endpoint: string, parameters: var Table[string, string], apiToken: string = ""): JsonNode =
+
+proc encodeQuery(query: Query, usePlus=true, omitEq=true): string =
+    for elem in query:
+        # Encode the `key = value` pairs and separate them with a '&'
+        if result.len > 0: result.add('&')
+        let (key, val) = elem
+        result.add(encodeUrl(key, usePlus))
+        # Omit the '=' if the value string is empty
+        if not omitEq or val.len > 0:
+            result.add('=')
+            result.add(encodeUrl(val, usePlus))
+
+proc `?`(uri: string, query: Query): string =
+    return uri & "?" & encodeQuery(query)
+
+proc `=?`(uri: var string, query: Query) =
+    uri = uri ? query
+
+proc buildRequest(endpoint: string, parameters: var seq[Parameter], apiToken: string = ""): JsonNode =
     var requestURL = $(parseUri(apiURL) / endpoint)
     if apiToken.len > 0:
-        parameters.add("access_token", $apiToken)
+        parameters.add(("access_token", $apiToken))
     if parameters.len > 0:
-        requestURL &= "?"
-        var idx = 1
-        for key, val in parameters.pairs:
-            requestURL &= "$#=$#" % [key, val]
-            if idx != parameters.len:
-                requestUrl &= "&"
-            inc idx
+        requestURL =? parameters
 
     var client = newHttpClient()
     var resp = client.get(requestURL)
-    if not resp.status.startsWith("2"):
+    if not resp.code.is2xx:
         raise newException(RequestFailed, "$#: $#" % [requestURL, resp.status])
     return parseJson(resp.body)
 
 proc buildRequest(endpoint: string, apiToken: string = ""): JsonNode =
-    var parameters = initTable[string, string]()
+    var parameters: seq[Parameter] = @[]
     return buildRequest(endpoint, parameters, apiToken)
 
 proc collectIds(character: JsonNode, loadoutKey: string = "equipment", key: string = "id"): seq[int] =
@@ -75,7 +89,7 @@ proc getLoadoutDetails(ids: seq[int], endpoint: string): Table[int, LoadoutDetai
     for subIds in distribute(ids, numSubs):
         let strIds = subIds.mapIt($it).join(",")
         if strIds.len > 0:
-            var parameters = {"ids": strIds}.toTable
+            var parameters = @[("ids", strIds)]
             let payload = buildRequest(endpoint, parameters)
             for itemNode in payload.elems:
                 let id = int(itemNode["id"].num)
@@ -109,32 +123,35 @@ proc collectTraitDetails(characters: seq[JsonNode]): Table[int, LoadoutDetail] =
     var ids = newSeq[int]()
     for character in characters:
         var wvw = character["specializations"]["wvw"]
-        for spec in character["specializations"]["wvw"]:
+        for spec in wvw:
             for trait in spec["traits"]:
                 ids.add(int(trait.num))
     return getLoadoutDetails(deduplicate(ids), endpoint)
-# Traits: {"specializations": {"wvw": [{"id": 13, "traits": [123, 13]}]}
+
+
+proc padNumber(i: Natural, count: Natural, padding = '0'): string =
+    return align($ i, count, padding)
 
 proc formatTime(seconds: int64): string =
     result = ""
     if seconds < 60:
         result &= "$#s" % [$ seconds]
     elif seconds < 3600:
-        result &= "$#m:$#s" % [$ (seconds div 60), intToStr(seconds mod 60, 2)]
+        result &= "$#m:$#s" % [$ (seconds div 60), padNumber(seconds mod 60, 2)]
     else:
         result &= "$#h:$#m:$#s" % [$ (seconds div 3600),
-                                   intToStr((seconds mod 3600) div 60, 2),
-                                   intToStr(seconds mod 60, 2)]
+                                   padNumber((seconds mod 3600) div 60, 2),
+                                   padNumber(seconds mod 60, 2)]
 
 proc getAllCharacters(apiToken: string): seq[JsonNode] =
-    var parameters = {"page": "0"}.toTable
+    var parameters = @[("page", "0")]
     return buildRequest("characters", parameters, apiToken=apiToken).elems
 
 proc getCharacterNames(apiToken: string): seq[string] =
     return getAllCharacters(apiToken).mapIt($it["name"])
 
 proc getCharacter(apiToken: string, name: string): JsonNode =
-    return buildRequest($(parseUri("characters") / encodeUrl(name).replace("+", "%20")), apiToken=apiToken)
+    return buildRequest($(parseUri("characters") / encodeUrl(name, usePlus=false)), apiToken=apiToken)
 
 proc getCharacterProfession(payload: JsonNode): ProfessionPlayTime =
     let
@@ -203,7 +220,7 @@ proc formatCharacterDetails(character: JsonNode,
             if attrs.len > 0:
                 line &= " ($#)" % [attrs.join(", ")]
         res.add(line)
-    res.add("    Specializations:")
+    res.add("    Specializations (WvW):")
     for spec in specializations:
         let id = int(spec["id"].num)
         if specDetails.hasKey(id):
